@@ -1,24 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Module with specific helper functions to manage progress reporting.
+Module with functions to manage progress logging.
 """
 
 import datetime
 import logging
 from typing import Optional
 
-# -------------------------------------------------------------
-# First define/init general variables/constants
-# -------------------------------------------------------------
 # Get a logger...
 logger = logging.getLogger(__name__)
 
-# -------------------------------------------------------------
-# The real work
-# -------------------------------------------------------------
 
-
-class ProgressHelper:
+class ProgressLogger:
     first_reporting_done = False
 
     def __init__(
@@ -42,8 +35,18 @@ class ProgressHelper:
         self.time_between_reporting_s = time_between_reporting_s
         self.calculate_eta_since_lastreporting = calculate_eta_since_lastreporting
 
-    def step(self, message: Optional[str] = None, nb_steps: int = 1):
+    def update(
+        self,
+        nb_steps_done: int,
+        nb_steps_total: int = None,
+        message: Optional[str] = None,
+    ):
+        if nb_steps_total is not None:
+            self.nb_steps_total = nb_steps_total
+        self.nb_steps_done = nb_steps_done
+        self.step(message=message, nb_steps=0)
 
+    def step(self, message: Optional[str] = None, nb_steps: int = 1):
         # Increase done counter
         self.nb_steps_done += nb_steps
 
@@ -63,9 +66,14 @@ class ProgressHelper:
             time_passed_for_eta_s = (time_now - self.start_time).total_seconds()
             nb_steps_done_eta = self.nb_steps_done
 
-        # Print progress on first step or if time between reporting has passed
+        # Print progress on first step, if sufficient time between reporting has passed
+        # or if sufficient progress since last reporting
+        pct_progress_since_last_reporting = (
+            self.nb_steps_done - self.nb_steps_done_lastreporting
+        ) / self.nb_steps_total
         if (
             time_passed_lastprogress_s >= self.time_between_reporting_s
+            or pct_progress_since_last_reporting > 0.1
             or self.first_reporting_done is False
         ):
             # Evade divisions by zero
@@ -95,8 +103,3 @@ class ProgressHelper:
             self.nb_steps_done_lastreporting = self.nb_steps_done
             if self.first_reporting_done is False:
                 self.first_reporting_done = True
-
-
-# If the script is ran directly...
-if __name__ == "__main__":
-    raise Exception("Not implemented")

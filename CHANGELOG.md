@@ -1,6 +1,30 @@
 # CHANGELOG
 
-## 0.4.1 (???)
+## 0.5.0 (???)
+
+### Improvements
+
+- Improve performance of prepare_traindatasets for large label files (#116)
+- Add check that train and validation data is mandatory (#118)
+- Support geopandas 0.13 + remove dependency on pygeos (#121)
+- Several small improvements to logging, linting,... (#110, #112, #122,...)
+
+### Bugs fixed
+
+- Fix occasional "database locked" error while predicting (#120)
+
+## 0.4.2 (2023-04-19)
+
+### Improvements
+
+- Add support for username/password logon for WMS (#97)
+- Improve performance of load_images (#99)
+
+### Bugs fixed
+
+- Fix download of model in load_sampleprojects (#100)
+
+## 0.4.1 (2023-01-20)
 
 ### Improvements
 
@@ -9,6 +33,7 @@
 - Add option to specify reclassify to neighbour query as postprocessing (#86, #88)
 - Reuse sample_project for tests so it is tested as well (#81)
 - Improve test coverage (#79, #82, #83)
+- Add support for shapely 2 (#92)
 
 ### Bugs fixed
 

@@ -21,13 +21,13 @@ import owslib
 import owslib.wms
 import owslib.util
 from PIL import Image
-import pygeos
 import rasterio as rio
 import rasterio.features as rio_features
 import rasterio.profiles as rio_profiles
+import shapely
 import shapely.geometry as sh_geom
 
-from orthoseg.helpers.progress_helper import ProgressHelper
+from orthoseg.util.progress_util import ProgressLogger
 from orthoseg.util import ows_util
 from orthoseg.util import vector_util
 
@@ -256,7 +256,7 @@ def prepare_traindatasets(
             labellocations_gdf["traindata_type"].isin(traindata_types)
         ]
         nb_todo += len(labellocations_curr_gdf)
-    progress = ProgressHelper(message="prepare training images", nb_steps_total=nb_todo)
+    progress = ProgressLogger(message="prepare training images", nb_steps_total=nb_todo)
     logger.info(f"Get images for {nb_todo} labels")
 
     for traindata_type in traindata_types:
@@ -284,7 +284,6 @@ def prepare_traindatasets(
                 created_images_gdf["geometry"] = None
                 wms_imagelayer_layersources = {}
                 for i, label_tuple in enumerate(labellocations_curr_gdf.itertuples()):
-
                     img_bbox = label_tuple.geometry
                     image_layer = getattr(label_tuple, "image_layer")
 
@@ -470,7 +469,7 @@ def prepare_labeldata(
         )  # tile height in units of crs => 500 m
         locations_none = []
         for location in labellocations_gdf.itertuples():
-            if location.geometry is None or len(location.geometry.bounds) < 4:
+            if location.geometry is None or location.geometry.is_empty:
                 logger.warning(
                     f"No or empty geometry found in file {Path(location.path).name} "
                     f"for index {location.Index}, it will be ignored"
@@ -486,8 +485,8 @@ def prepare_labeldata(
                 )
 
             # Check if the geometry is valid
-            is_valid_reason = pygeos.is_valid_reason(
-                labellocations_gdf.geometry.array.data[location.Index]
+            is_valid_reason = shapely.is_valid_reason(
+                labellocations_gdf.geometry[location.Index]
             )
             if is_valid_reason != "Valid Geometry":
                 errors_found.append(
@@ -514,8 +513,8 @@ def prepare_labeldata(
             if intersection.area < (location_geom_aligned.area - area_1row_1col):
                 # Original geom was digitized too small
                 errors_found.append(
-                    f"Location geometry too small in {Path(location.path).name}: "
-                    f"{location.geometry.wkt}"
+                    "Location geometry skewed or too small in "
+                    f"{Path(location.path).name}: {location.geometry.wkt}"
                 )
             elif location_geom_aligned.area > 1.1 * sh_geom.box(*geom_bounds).area:
                 logger.warn(
@@ -534,6 +533,18 @@ def prepare_labeldata(
             errors_found.append(
                 "No crs in labellocations, labellocation_gdf.crs: "
                 f"{labellocations_gdf.crs}"
+            )
+
+        # Check that there is at least one train location and one validation location.
+        if len(labellocations_gdf.query("traindata_type == 'train'")) < 1:
+            errors_found.append(
+                "No labellocations with traindata_type == 'train' found! At least one "
+                "needed"
+            )
+        if len(labellocations_gdf.query("traindata_type == 'validation'")) < 1:
+            errors_found.append(
+                "No labellocations with traindata_type == 'validation' found! At least "
+                "one needed, but ~10% of the number of 'train' locations recommended."
             )
 
         # Validate + process the polygons data
@@ -714,7 +725,6 @@ def _create_mask(
     minimum_pct_labeled: float = 0.0,
     force: bool = False,
 ) -> Optional[bool]:
-
     # If file exists already and force is False... stop.
     if force is False and output_mask_filepath.exists():
         logger.debug(
@@ -728,6 +738,7 @@ def _create_mask(
     with rio.open(input_image_filepath) as image_ds:
         image_input_profile = image_ds.profile
         image_transform_affine = image_ds.transform
+        bounds = image_ds.bounds
 
     # Prepare the file profile for the mask depending on output type
     output_ext_lower = output_mask_filepath.suffix.lower()
@@ -746,6 +757,13 @@ def _create_mask(
         height=image_input_profile["height"],
         dtype=rio.uint8,
     )
+
+    # Filter the vectors that intersect the image bounds
+    labels_to_burn_gdf = labels_to_burn_gdf.loc[
+        labels_to_burn_gdf.intersects(
+            sh_geom.box(bounds.left, bounds.bottom, bounds.right, bounds.top)
+        )
+    ].copy()  # type: ignore
 
     # Burn the vectors in a mask
     burn_shapes = [
