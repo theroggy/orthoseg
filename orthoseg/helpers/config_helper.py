@@ -7,10 +7,13 @@ import json
 import logging
 from pathlib import Path
 import pprint
-from typing import List, Optional
+import re
+import tempfile
+from typing import Dict, List, Optional
 
 from orthoseg.util import config_util
 from orthoseg.util.ows_util import FileLayerSource, WMSLayerSource
+from orthoseg.lib.prepare_traindatasets import LabelInfo
 
 # Get a logger...
 logger = logging.getLogger(__name__)
@@ -19,6 +22,8 @@ logger = logging.getLogger(__name__)
 # Remark: '_' cannot be used because '_' is used as devider to parse filenames, and if
 # it is used in codes as well the parsing becomes a lot more difficult.
 illegal_chars_in_codes = ["_", ",", ".", "?", ":"]
+
+tmp_dir = None
 
 
 def pformat_config() -> str:
@@ -37,16 +42,48 @@ def pformat_config() -> str:
     return message
 
 
-def read_orthoseg_config(config_path: Path):
+def read_orthoseg_config(config_path: Path, overrules: List[str] = []):
     """
     Read an orthoseg configuration file.
 
     Args:
         config_path (Path): path to the configuration file to read.
+        overrules (List[str], optional): list of config options that will overrule other
+            ways to supply configuration. They should be specified as a list of
+            "<section>.<parameter>=<value>" strings. Defaults to [].
     """
     # Determine list of config files that should be loaded
     config_paths = config_util.get_config_files(config_path)
-    # Load them
+
+    # If there are overrules, write them to a temporary configuration file.
+    global config_overrules
+    config_overrules = overrules
+    global config_overrules_path
+    config_overrules_path = None
+    if len(config_overrules) > 0:
+        config_overrules_path = get_tmp_dir() / "config_overrules.ini"
+
+        # Create config parser, add all overrules
+        overrules_parser = configparser.ConfigParser()
+        for overrule in config_overrules:
+            parts = overrule.split("=")
+            if len(parts) != 2:
+                raise ValueError(f"invalid config overrule found: {overrule}")
+            key, value = parts
+            parts2 = key.split(".")
+            if len(parts2) != 2:
+                raise ValueError(f"invalid config overrule found: {overrule}")
+            section, parameter = parts2
+            if section not in overrules_parser:
+                overrules_parser[section] = {}
+            overrules_parser[section][parameter] = value
+
+        # Write to temp file and add file to config_paths
+        with open(config_overrules_path, "w") as overrules_file:
+            overrules_parser.write(overrules_file)
+        config_paths.append(config_overrules_path)
+
+    # Load configs
     global config
     config = config_util.read_config_ext(config_paths)
 
@@ -97,7 +134,7 @@ def read_orthoseg_config(config_path: Path):
     # of the project config file.
     projects_dir = dirs.getpath("projects_dir")
     if not projects_dir.is_absolute():
-        projects_dir_absolute = (config_paths[-1].parent / projects_dir).resolve()
+        projects_dir_absolute = (config_path.parent / projects_dir).resolve()
         logger.info(
             f"dirs.projects_dir was relative: is resolved to {projects_dir_absolute}"
         )
@@ -110,6 +147,40 @@ def read_orthoseg_config(config_path: Path):
 
     global image_layers
     image_layers = _read_layer_config(layer_config_filepath=layer_config_filepath)
+
+
+def get_tmp_dir() -> Path:
+    """
+    Get a temporary directory for this run.
+
+    If no temporary directory exists yet, it is created.
+
+    Returns:
+        Path: the path to the temporary directory.
+    """
+    global tmp_dir
+
+    if tmp_dir is None:
+        tmp_dir = Path(tempfile.gettempdir()) / "orthoseg"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_dir = Path(tempfile.mkdtemp(prefix="run_", dir=tmp_dir))
+
+    return tmp_dir
+
+
+def get_train_label_infos() -> List[LabelInfo]:
+    """
+    Searches and returns LabelInfos that can be used to create a training dataset.
+
+    Returns:
+        List[LabelInfo]: List of LabelInfos found.
+    """
+    return _prepare_train_label_infos(
+        labelpolygons_pattern=train.getpath("labelpolygons_pattern"),
+        labellocations_pattern=train.getpath("labellocations_pattern"),
+        label_datasources=train.getdict("label_datasources", None),
+        image_layers=image_layers,
+    )
 
 
 def _read_layer_config(layer_config_filepath: Path) -> dict:
@@ -162,6 +233,8 @@ def _read_layer_config(layer_config_filepath: Path) -> dict:
                 "wms_layernames",
                 "wms_layerstyles",
                 "bands",
+                "wms_username",
+                "wms_password",
                 "random_sleep",
                 "wms_ignore_capabilities_url",
                 "path",
@@ -185,6 +258,8 @@ def _read_layer_config(layer_config_filepath: Path) -> dict:
                         layernames=_str2list(layersource["wms_layernames"]),
                         layerstyles=_str2list(layersource.get("wms_layerstyles")),
                         bands=_str2intlist(layersource.get("bands", None)),
+                        username=layersource.get("wms_username", None),
+                        password=layersource.get("wms_password", None),
                         random_sleep=int(layersource.get("random_sleep", 0)),
                         wms_ignore_capabilities_url=_str2bool(
                             layersource.get("wms_ignore_capabilities_url", False)
@@ -216,7 +291,7 @@ def _read_layer_config(layer_config_filepath: Path) -> dict:
         # Read nb_concurrent calls param
         image_layers[image_layer]["nb_concurrent_calls"] = layer_config[
             image_layer
-        ].getint("nb_concurrent_calls", fallback=6)
+        ].getint("nb_concurrent_calls", fallback=1)
 
         # Check if a region of interest is specified as file or bbox
         image_layers[image_layer]["roi_filepath"] = layer_config[image_layer].getpath(
@@ -231,7 +306,6 @@ def _read_layer_config(layer_config_filepath: Path) -> dict:
                 float(bbox_list[2]),
                 float(bbox_list[3]),
             )
-            image_layers[image_layer]["bbox"] = bbox_tuple
         image_layers[image_layer]["bbox"] = bbox_tuple
 
         # Check if the grid xmin and xmax are specified
@@ -243,13 +317,156 @@ def _read_layer_config(layer_config_filepath: Path) -> dict:
         )
 
         # Check if a image_pixels_ignore_border is specified
-        image_pixels_ignore_border = layer_config[image_layer].getint(
-            "image_pixels_ignore_border", fallback=0
+        image_layers[image_layer]["image_pixels_ignore_border"] = layer_config[
+            image_layer
+        ].getint("image_pixels_ignore_border", fallback=0)
+
+        # Convert pixel_x_size and pixel_y_size to float
+        image_layers[image_layer]["pixel_x_size"] = layer_config[image_layer].getfloat(
+            "pixel_x_size"
         )
-        image_layers[image_layer][
-            "image_pixels_ignore_border"
-        ] = image_pixels_ignore_border
+        image_layers[image_layer]["pixel_y_size"] = layer_config[image_layer].getfloat(
+            "pixel_y_size"
+        )
+
     return image_layers
+
+
+def _prepare_train_label_infos(
+    labelpolygons_pattern: Path,
+    labellocations_pattern: Path,
+    label_datasources: dict,
+    image_layers: Dict[str, dict],
+) -> List[LabelInfo]:
+    # Search for the files based on the file name patterns...
+    label_infos: Dict[str, LabelInfo] = {}
+    if labelpolygons_pattern is not None or labellocations_pattern is not None:
+        label_infos = {
+            info.locations_path.resolve().as_posix(): info
+            for info in _search_label_files(
+                labelpolygons_pattern, labellocations_pattern
+            )
+        }
+
+    # If there are label datasources configures in the project, process them as well.
+    if label_datasources is not None:
+        for label_ds_key in label_datasources:
+            label_ds = label_datasources[label_ds_key]
+
+            # Prepare polygons_path with backwards compatibility for "data_path"
+            polygons_path = None
+            if "polygons_path" in label_ds:
+                polygons_path = label_ds["polygons_path"]
+            if "data_path" in label_ds:
+                polygons_path = label_ds["data_path"]
+
+            # If the label datasource was already found using pattern search, overrule
+            # extra info rather than adding one.
+            locations_path = Path(label_ds["locations_path"]).resolve().as_posix()
+            if locations_path in label_infos:
+                if polygons_path is not None:
+                    label_infos[locations_path].polygons_path = Path(polygons_path)
+                if label_ds.get("image_layer") is not None:
+                    label_infos[locations_path].image_layer = label_ds["image_layer"]
+                if label_ds.get("pixel_x_size") is not None:
+                    label_infos[locations_path].pixel_x_size = label_ds["pixel_x_size"]
+                if label_ds.get("pixel_y_size") is not None:
+                    label_infos[locations_path].pixel_y_size = label_ds["pixel_y_size"]
+            else:
+                # Add as new LabelInfo
+                label_infos[locations_path] = LabelInfo(
+                    locations_path=Path(label_ds["locations_path"]),
+                    polygons_path=Path(polygons_path),
+                    image_layer=label_ds["image_layer"],
+                    pixel_x_size=label_ds.get("pixel_x_size"),
+                    pixel_y_size=label_ds.get("pixel_y_size"),
+                )
+
+    # Check if the configured image_layer exists for all label_infos
+    for label_info in label_infos.values():
+        if label_info.image_layer not in image_layers:
+            raise ValueError(
+                f"invalid image_layer in <{label_info}>: not in {list(image_layers)}"
+            )
+
+    return list(label_infos.values())
+
+
+def _search_label_files(
+    labelpolygons_pattern: Path, labellocations_pattern: Path
+) -> List[LabelInfo]:
+    if not labelpolygons_pattern.parent.exists():
+        raise ValueError(f"Label dir doesn't exist: {labelpolygons_pattern.parent}")
+    if not labellocations_pattern.parent.exists():
+        raise ValueError(f"Label dir doesn't exist: {labellocations_pattern.parent}")
+
+    label_infos = []
+    labelpolygons_pattern_searchpath = Path(
+        str(labelpolygons_pattern).format(image_layer="*")
+    )
+    labelpolygons_paths = list(
+        labelpolygons_pattern_searchpath.parent.glob(
+            labelpolygons_pattern_searchpath.name
+        )
+    )
+    labellocations_pattern_searchpath = Path(
+        str(labellocations_pattern).format(image_layer="*")
+    )
+    labellocations_paths = list(
+        labellocations_pattern_searchpath.parent.glob(
+            labellocations_pattern_searchpath.name
+        )
+    )
+
+    # Loop through all labellocation files
+    for labellocations_path in labellocations_paths:
+        tokens = _unformat(labellocations_path.stem, labellocations_pattern.stem)
+        if "image_layer" not in tokens:
+            raise ValueError(  # pragma: no cover
+                f"image_layer token not found in {labellocations_path} using pattern "
+                f"{labellocations_pattern}"
+            )
+        image_layer = tokens["image_layer"]
+
+        # Look for the matching (= same image_layer) data file
+        found = False
+        for labelpolygons_path in labelpolygons_paths:
+            tokens = _unformat(labelpolygons_path.stem, labelpolygons_pattern.stem)
+            if "image_layer" not in tokens:
+                raise ValueError(  # pragma: no cover
+                    f"image_layer token not found in {labelpolygons_path} using "
+                    f"pattern {labelpolygons_pattern}"
+                )
+
+            if tokens["image_layer"] == image_layer:
+                found = True
+                break
+
+        if found is False:
+            raise ValueError(
+                f"no matching polygon data file found for {labellocations_path}"
+            )
+        label_infos.append(
+            LabelInfo(
+                locations_path=labellocations_path,
+                polygons_path=labelpolygons_path,
+                image_layer=image_layer,
+            )
+        )
+
+    return label_infos
+
+
+def _unformat(string: str, pattern: str) -> dict:
+    regex = re.sub(r"{(.+?)}", r"(?P<_\1>.+)", pattern)
+    regex_result = re.search(regex, string)
+    if regex_result is not None:
+        values = list(regex_result.groups())
+        keys = re.findall(r"{(.+?)}", pattern)
+        _dict = dict(zip(keys, values))
+        return _dict
+    else:
+        raise ValueError(f"pattern {pattern} not found in {string}")
 
 
 def _str2list(input: Optional[str]):

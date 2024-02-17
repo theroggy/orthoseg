@@ -1,14 +1,21 @@
 # CHANGELOG
 
-## ??? (???)
+## 0.6.0 (???)
 
 ### Improvements
 
-- Several small improvements (#)
+- Add support to train subject on different pixel sizes (#143)
+- Add support to overrule configuration parameters via command line arguments (#152)
+- Several small improvements (#128)
 
 ### Bugs fixed
 
-- Fix: check that traindataset has validation samples should not be per file (#131)
+- Fix check that traindataset has validation samples should not be per file (#131)
+- Fix support for WMS username/password (#146)
+
+### Deprecations and compatibility notes
+
+- Change default nb_concurrent_calls when downloading layer to 1 instead of 6 (##149)
 
 ## 0.5.0 (2023-07-27)
 
