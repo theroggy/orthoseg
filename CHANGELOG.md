@@ -4,14 +4,21 @@
 
 ### Improvements
 
-- Add support to train subject on different pixel sizes (#143)
+- Add support to train subject on different pixel sizes (#143, #174)
 - Add support to overrule configuration parameters via command line arguments (#152)
+- Add option(s) to do automatic cleanup of "old" models, predictions and training data
+  directories (#52)
+- In prepare_trainingdata, reuse images already available in previous version (#170)
+- Add command to (only) validate a training dataset (#133)
+- Add options to improve control of output of postprocess (#167)
 - Several small improvements (#128)
+- Update dependencies: geopandas, ruff,... + drop support for pygeos (#179)
 
 ### Bugs fixed
 
 - Fix check that traindataset has validation samples should not be per file (#131)
 - Fix support for WMS username/password (#146)
+- Fix train gives an error after training if there are no "test" locations defined (#165)
 
 ### Deprecations and compatibility notes
 

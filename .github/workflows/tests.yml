@@ -43,13 +43,17 @@ jobs:
         env: ["latest"]
         include:
           - env: latest
-            os: macos-latest
+            os: macos-13
             dev: false
             python: "3.10"
           - env: latest
             os: windows-latest
             dev: false
             python: "3.10"
+          - env: minimal
+            os: ubuntu-latest
+            dev: false
+            python: "3.9"
             
     steps:
       - uses: actions/checkout@v4

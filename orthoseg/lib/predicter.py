@@ -49,6 +49,7 @@ def predict_dir(
     nb_parallel_postprocess: int = 1,
     max_prediction_errors: int = 100,
     force: bool = False,
+    no_images_ok: bool = False,
 ):
     """
     Create a prediction for all the images in a directory.
@@ -101,6 +102,9 @@ def predict_dir(
             tolerated before stopping prediction. If -1, no limit. Defaults to 100.
         force: False to skip images that already have a prediction, true to
             ignore existing predictions and overwrite them
+        no_images_ok (bool, optional): False to throw `ValueError`
+            when no images available in the `input_image_dir`,
+            True to return without error. Defaults to False.
     """
     # Init
     if not input_image_dir.exists():
@@ -145,6 +149,8 @@ def predict_dir(
     nb_images = len(image_filepaths)
 
     if nb_images == 0:
+        if no_images_ok:
+            return
         raise ValueError(f"Found no {input_ext} images to predict in {input_image_dir}")
     logger.info(f"Found {nb_images} {input_ext} images to predict in {input_image_dir}")
 
@@ -201,9 +207,7 @@ def predict_dir(
         nb_parallel_read
     ) as read_pool, futures.ProcessPoolExecutor(
         nb_parallel_postprocess, initializer=init_postprocess_worker()
-    ) as postprocess_pool, futures.ProcessPoolExecutor(
-        max_workers=1
-    ) as write_pool:
+    ) as postprocess_pool, futures.ProcessPoolExecutor(max_workers=1) as write_pool:
         # Start looping.
         # If ready to stop, the code below will break
         perf_time_start = datetime.datetime.now()
