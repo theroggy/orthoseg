@@ -27,6 +27,7 @@ from rasterio import (
     transform as rio_transform,
     windows as rio_windows,
 )
+from rasterio._err import CPLE_AppDefinedError
 
 from . import progress_util
 
@@ -447,7 +448,7 @@ def align_bbox_to_grid(
         logger.log(level=log_level, msg=msg)
         bbox_tmp[3] = ymax_new
 
-    return tuple(bbox_tmp)
+    return (bbox_tmp[0], bbox_tmp[1], bbox_tmp[2], bbox_tmp[3])
 
 
 def _interprete_ssl_verify(ssl_verify: Union[bool, str, None]):
@@ -840,13 +841,27 @@ def getmap_to_file(
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=rio_errors.NotGeoreferencedWarning)
 
-        with rio.open(str(output_filepath), "w", **image_profile_output) as image_file:
-            image_file.write(image_data_output)
+        try:
+            with rio.open(
+                str(output_filepath), "w", **image_profile_output
+            ) as image_file:
+                image_file.write(image_data_output)
+        except CPLE_AppDefinedError as ex:  # pragma: no cover
+            if ex.errmsg.startswith("Deleting ") and ex.errmsg.endswith(
+                " failed: No such file or directory"
+            ):
+                # Occasionally this error occurs, not sure why: ignore it.
+                logger.debug(f"Ignore error: {ex}")
+            else:
+                raise ex
 
     # If an aux.xml file was written, remove it again...
     output_aux_path = output_filepath.parent / f"{output_filepath.name}.aux.xml"
-    if output_aux_path.exists() is True:
-        output_aux_path.unlink()
+    try:
+        output_aux_path.unlink(missing_ok=True)
+    except Exception as ex:  # pragma: no cover
+        # Occasionally the .aux.xml file is locked, not sure why: ignore it.
+        logger.debug(f"Ignore error: {ex}")
 
     # Make the output image compliant with image_format_save
 
