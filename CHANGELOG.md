@@ -7,7 +7,8 @@
 - Support reading images directly from the datasource while predicting (#228, #231)
 - Make image format for downloaded images configurable (#204)
 - Add validations on the augmentation configuration (#214)
-- Make load_images more robust by ignoring some filesystem errors that occur sometimes
+- Improve performance of `predict_dir` for `evaluation_mode` (#236)
+- Make `load_images` more robust by ignoring some filesystem errors that occur sometimes
   but that don't seem to give actual issues (#216, #2019)
 - Small improvements to logging, error messages,... (#198, #218)
 - Add support + tests for latest tensorflow version (#217)
@@ -17,6 +18,8 @@
 ### Bugs fixed
 
 - Avoid error if a training dataset contains 2 identical locations (#205)
+- Avoid error with mixed usage of label name and classname columns in polygon train
+  files (#237)
 
 ## 0.6.1 (2024-08-12)
 
