@@ -303,7 +303,7 @@ def test_prepare_labeldata_polygons_columnname_backw_compat():
         image_pixel_width=TestData.image_pixel_width,
         image_pixel_height=TestData.image_pixel_height,
     )
-    locations_gdf, polygons_to_burn_gdf = labeldata[0]
+    _locations_gdf, polygons_to_burn_gdf = labeldata[0]
 
     assert len(polygons_to_burn_gdf) == 2
 
@@ -329,7 +329,11 @@ locations = {
     ],
 )
 def test_prepare_traindatasets_reuse_prev_images(
-    tmp_path, empty_image, descr, prev_locations, new_locations
+    tmp_path,
+    empty_image,
+    descr,  # noqa: ARG001
+    prev_locations,
+    new_locations,
 ):
     """Test if images of previous training versions are reused properly."""
     # Prepare test data
@@ -344,12 +348,12 @@ def test_prepare_traindatasets_reuse_prev_images(
     traindata_types = ["train", "validation", "test"]
 
     for traindata_type in traindata_types:
-        dir = prev_training_dir / traindata_type
-        (dir / "image").mkdir(parents=True, exist_ok=True)
-        (dir / "mask").mkdir(parents=True, exist_ok=True)
+        type_dir = prev_training_dir / traindata_type
+        (type_dir / "image").mkdir(parents=True, exist_ok=True)
+        (type_dir / "mask").mkdir(parents=True, exist_ok=True)
         for previous_location in prev_locations:
             _, _, image = locations[previous_location]
-            image_path = dir / "image" / image
+            image_path = type_dir / "image" / image
             shutil.copy(empty_image, image_path)
             image_path.with_suffix(".pgw").touch()
 
