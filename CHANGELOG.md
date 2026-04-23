@@ -7,6 +7,8 @@
 - Using `rescale` as augmentation is not allowed anymore as the rescaling of input
   images will now be done via the keras.application `preprocess_input' function of the
   backbone model used (#314).
+- Support for all optimizers offered by keras was added, but the setting has now become 
+  case sensitive (#334).
 
 ### Improvements
 
@@ -17,6 +19,7 @@
     - Use [segmodels_keras](https://github.com/orthoseg/segmodels_keras) (#311)
     - Avoid unneeded direct use of tensorflow (#304, #313)
 - Use keras.applications `preprocess_input` functions to prepare inputs (#314)
+- Significant improvements to the documentation (#316, #330,...)
 
 ## 0.7.1 (2026-04-13)
 
