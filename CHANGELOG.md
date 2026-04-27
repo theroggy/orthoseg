@@ -8,11 +8,13 @@
   images will now be done via the keras.application `preprocess_input' function of the
   backbone model used (#314).
 - Support for all optimizers offered by keras was added, but the setting has now become 
-  case sensitive and AdamW is now the default optimizer (#334, #335).
+  case sensitive. For Keras >= 3, AdamW is now the default optimizer
+  (#334, #335, #338).
 
 ### Improvements
 
 - Add support to reproject a local image layer (#290)
+- Add support to configure an image layer based on a simple dir with images (#337)
 - Improve handling of `switch_axes` and `ssl_verify` (#295)
 - Add proper support for keras 3:
     - Use `categorical_focal_crossentropy` by default on keras 3 (#312)
