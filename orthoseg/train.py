@@ -42,8 +42,7 @@ def _train_args(args) -> argparse.Namespace:
         "config_overrules",
         nargs="*",
         help=(
-            "Supply any number of config overrules like this: "
-            "<section>.<parameter>=<value>"
+            "Supply any number of config overrules like this: <section>.<key>=<value>"
         ),
     )
 
@@ -57,7 +56,7 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
         config_path (Path): Path to the config file to use.
         config_overrules (list[str], optional): list of config options that will
             overrule other ways to supply configuration. They should be specified in the
-            form of "<section>.<parameter>=<value>". Defaults to None.
+            form of "<section>.<key>=<value>". Defaults to None.
     """
     # Init
     # Load the config and save in a bunch of global variables zo it
@@ -145,6 +144,7 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
             trainparams_id=conf.train.getint("trainparams_id"),
             image_augmentations=conf.train.getdict("image_augmentations"),
             mask_augmentations=conf.train.getdict("mask_augmentations"),
+            weights_type=conf.train.get("weights_type"),
             class_weights=class_weights,
             batch_size=conf.train.getint("batch_size_fit"),
             optimizer=conf.train.get("optimizer"),
@@ -312,6 +312,7 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
                 segment_subject=segment_subject,
                 traindata_id=traindata_id,
                 hyperparams=hyperparams,
+                weights_dir=conf.dirs.getpath("weights_dir"),
                 model_preload_filepath=model_preload_filepath,
                 image_width=conf.train.getint("image_pixel_width"),
                 image_height=conf.train.getint("image_pixel_height"),
