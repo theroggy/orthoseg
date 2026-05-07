@@ -33,6 +33,6 @@ def test_postprocess_error_handling():
         match="ERROR in postprocess for footballfields_BEFL-2019 on UNEXISTING",
     ):
         postprocess(
-            config_path=test_helper.SampleProjectFootball.predict_config_path,
+            config_path=test_helper.SportsFields.predict_config_path,
             config_overrules=["predict.image_layer=UNEXISTING"],
         )

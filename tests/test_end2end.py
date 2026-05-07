@@ -13,10 +13,12 @@ import orthoseg
 import orthoseg.model.model_helper as mh
 from orthoseg.helpers import config_helper as conf
 from tests import test_helper
+from tests.test_helper import ProjectTemplate, SportsFields
 
+sportsfields_subject = SportsFields.project_dir.name
 testprojects_dir = Path(tempfile.gettempdir()) / "orthoseg_test_end2end/sample_projects"
-footballfields_dir = testprojects_dir / "footballfields"
-projecttemplate_dir = testprojects_dir / "project_template"
+sportsfields_dir = testprojects_dir / sportsfields_subject
+projecttemplate_dir = testprojects_dir / ProjectTemplate.project_dir.name
 
 
 def get_testdata_dir() -> Path:
@@ -32,7 +34,7 @@ def test_1_init_testproject():
 @pytest.mark.order(after="test_1_init_testproject")
 def test_2_load_images():
     # Load project config to init some vars.
-    config_path = footballfields_dir / "footballfields_BEFL-2019.ini"
+    config_path = sportsfields_dir / SportsFields.predict_config_path.name
     conf.read_orthoseg_config(config_path)
     image_cache_dir = conf.dirs.getpath("predict_image_input_dir")
 
@@ -58,7 +60,7 @@ def test_2_load_images():
 @pytest.mark.order(after="test_1_init_testproject")
 def test_3_train():
     # Load project config to init some vars.
-    config_path = footballfields_dir / "footballfields.ini"
+    config_path = sportsfields_dir / SportsFields.config_path.name
 
     # Overrule config so small images are used, only one epoch is ran,... to speed up
     # the test.
@@ -86,13 +88,17 @@ def test_3_train():
         shutil.rmtree(training_id_dir)
     model_dir = conf.dirs.getpath("model_dir")
     if model_dir.exists():
-        modelfile_paths = model_dir.glob(f"footballfields_{traindata_id_result:02d}_*")
+        modelfile_paths = model_dir.glob(
+            f"{sportsfields_subject}_{traindata_id_result:02d}_*"
+        )
         for modelfile_path in modelfile_paths:
             modelfile_path.unlink()
 
     # Make sure the label files in version 01 are older than those in the label dir
     # so a new model will be trained
-    label_01_path = training_dir / "01/footballfields_BEFL-2019_polygons.gpkg"
+    label_01_path = (
+        training_dir / "01/sportsfields-sample_BEFL-2025-sample_polygons.gpkg"
+    )
     timestamp_old = datetime(year=2020, month=1, day=1).timestamp()
     os.utime(label_01_path, (timestamp_old, timestamp_old))
 
@@ -120,13 +126,17 @@ def test_3_train():
         shutil.rmtree(training_id_dir)
     model_dir = conf.dirs.getpath("model_dir")
     if model_dir.exists():
-        modelfile_paths = model_dir.glob(f"footballfields_{traindata_id_result:02d}_*")
+        modelfile_paths = model_dir.glob(
+            f"{sportsfields_subject}_{traindata_id_result:02d}_*"
+        )
         for modelfile_path in modelfile_paths:
             modelfile_path.unlink()
 
     # Make sure the label files in version 01 are older than those in the label dir
     # so a new model will be trained
-    label_01_path = training_dir / "01/footballfields_BEFL-2019_polygons.gpkg"
+    label_01_path = (
+        training_dir / f"01/{sportsfields_subject}_BEFL-2025-sample_polygons.gpkg"
+    )
     timestamp_old = datetime(year=2020, month=1, day=1).timestamp()
     os.utime(label_01_path, (timestamp_old, timestamp_old))
 
@@ -155,14 +165,14 @@ def test_3_train():
 @pytest.mark.order(after="test_2_load_images")
 def test_4_predict():
     # Load project config to init some vars.
-    config_path = footballfields_dir / "footballfields_BEFL-2019.ini"
+    config_path = sportsfields_dir / SportsFields.predict_config_path.name
     overrules = ["train.force_model_traindata_id=1"]
 
     conf.read_orthoseg_config(config_path, overrules=overrules)
 
     # Cleanup result if it isn't empty yet
     predict_image_output_dir = Path(
-        f"{conf.dirs['predict_image_output_basedir']}_footballfields_02_0"
+        f"{conf.dirs['predict_image_output_basedir']}_{sportsfields_subject}_02_0"
     )
     if predict_image_output_dir.exists():
         shutil.rmtree(predict_image_output_dir)
@@ -177,13 +187,15 @@ def test_4_predict():
     # Download the version 01 model
     model_dir = conf.dirs.getpath("model_dir")
     model_dir.mkdir(parents=True, exist_ok=True)
-    test_helper.SampleProjectFootball.download_model(model_dir)
+    test_helper.SportsFields.download_model(model_dir)
 
     # Run task to predict
     orthoseg.predict(config_path, config_overrules=overrules)
 
     # Check results
-    result_vector_path = result_vector_dir / "footballfields_01_201_BEFL-2019.gpkg"
+    result_vector_path = (
+        result_vector_dir / f"{sportsfields_subject}_01_201_BEFL-2025-sample.gpkg"
+    )
     assert result_vector_path.exists()
     result_gdf = gfo.read_file(result_vector_path)
     if os.name == "nt":
@@ -199,7 +211,7 @@ def test_4_predict():
 @pytest.mark.order(after="test_4_predict")
 def test_5_postprocess():
     # Load project config to init some vars.
-    config_path = footballfields_dir / "footballfields_BEFL-2019.ini"
+    config_path = sportsfields_dir / SportsFields.predict_config_path.name
     overrules = ["train.force_model_traindata_id=1"]
 
     conf.read_orthoseg_config(config_path, overrules=overrules)
@@ -207,7 +219,8 @@ def test_5_postprocess():
     # Cleanup result if it isn't empty yet
     result_vector_dir = conf.dirs.getpath("output_vector_dir")
     result_diss_path = (
-        result_vector_dir / "footballfields_01_201_BEFL-2019_dissolve.gpkg"
+        result_vector_dir
+        / f"{sportsfields_subject}_01_201_BEFL-2025-sample_dissolve.gpkg"
     )
     if result_diss_path.exists():
         gfo.remove(result_diss_path)

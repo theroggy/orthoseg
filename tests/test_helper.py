@@ -1,6 +1,4 @@
-"""
-Helper functions for all tests.
-"""
+"""Helper functions for all tests."""
 
 import logging
 import os
@@ -15,19 +13,19 @@ from shapely import geometry as sh_geom
 sampleprojects_dir = Path(__file__).resolve().parent.parent / "sample_projects"
 
 
-class SampleProjectFootball:
-    project_dir = sampleprojects_dir / "footballfields"
-    predict_config_path = project_dir / "footballfields_BEFL-2019.ini"
-    config_path = project_dir / "footballfields.ini"
+class SportsFields:
+    project_dir = sampleprojects_dir / "sportsfields-sample"
+    predict_config_path = project_dir / "sportsfields-sample_BEFL-2025-sample.ini"
+    config_path = project_dir / "sportsfields-sample.ini"
 
     @staticmethod
     def download_model(dst_dir):
         cache_dir = Path(tempfile.gettempdir()) / "orthoseg_test_cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        model_name = "footballfields_01_0.97392_201.hdf5"
-        model_hyperparams_name = "footballfields_01_hyperparams.json"
-        model_modeljson_name = "footballfields_01_model.json"
+        model_name = "sportsfields_01_0.97392_201.hdf5"
+        model_hyperparams_name = "sportsfields_01_hyperparams.json"
+        model_modeljson_name = "sportsfields_01_model.json"
 
         model_hdf5_cache_path = cache_dir / model_name
         if not model_hdf5_cache_path.exists():
@@ -57,7 +55,7 @@ class SampleProjectFootball:
             os.link(model_modeljson_cache_path, dst_dir / model_modeljson_name)
 
 
-class SampleProjectTemplate:
+class ProjectTemplate:
     project_dir = sampleprojects_dir / "project_template"
 
 

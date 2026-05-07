@@ -8,7 +8,7 @@ import pytest
 
 from orthoseg.helpers import config_helper as conf
 from orthoseg.lib.prepare_traindatasets import LabelInfo
-from tests.test_helper import SampleProjectFootball, TestData, sampleprojects_dir
+from tests.test_helper import SportsFields, TestData, sampleprojects_dir
 
 
 @pytest.mark.parametrize(
@@ -31,14 +31,12 @@ def test_read_orthoseg_config_error_segment_subject(overrules, exp_error, messag
         exp_error,
         match=message,
     ):
-        conf.read_orthoseg_config(
-            SampleProjectFootball.predict_config_path, overrules=overrules
-        )
+        conf.read_orthoseg_config(SportsFields.predict_config_path, overrules=overrules)
 
 
 def test_read_orthoseg_config_image_layers():
     # Load project config to init some vars.
-    conf.read_orthoseg_config(SampleProjectFootball.predict_config_path)
+    conf.read_orthoseg_config(SportsFields.predict_config_path)
 
     layer = conf.image_layers.get("BEFL-2019")
     assert layer is not None
@@ -112,8 +110,8 @@ def test_read_orthoseg_config_image_layers_filelayer_dir_no_file_patterns(tmp_pa
 @pytest.mark.parametrize(
     "overrules, expected_image_layer",
     [
-        (None, "BEFL-2019"),
-        ([], "BEFL-2019"),
+        (None, "BEFL-2025-sample"),
+        ([], "BEFL-2025-sample"),
         (["predict.image_layer=BEFL-2020"], "BEFL-2020"),
     ],
 )
@@ -122,7 +120,7 @@ def test_read_orthoseg_config_predict_overrules(overrules, expected_image_layer)
     kwargs = {}
     if overrules is not None:
         kwargs["overrules"] = overrules
-    conf.read_orthoseg_config(SampleProjectFootball.predict_config_path, **kwargs)
+    conf.read_orthoseg_config(SportsFields.predict_config_path, **kwargs)
 
     image_layer = conf.predict.get("image_layer")
     assert image_layer == expected_image_layer
@@ -136,9 +134,7 @@ def test_read_orthoseg_config_predict_overrules_invalid(overrules):
     """Test with invalid overrules: one without '=' and one without '.'."""
     # Load project config to test overrules.
     with pytest.raises(ValueError, match="invalid config overrule found"):
-        conf.read_orthoseg_config(
-            SampleProjectFootball.predict_config_path, overrules=overrules
-        )
+        conf.read_orthoseg_config(SportsFields.predict_config_path, overrules=overrules)
 
 
 @pytest.mark.parametrize(
@@ -154,7 +150,7 @@ def test_read_orthoseg_config_train_overrules(overrules, expected_image_layer):
     kwargs = {}
     if overrules is not None:
         kwargs["overrules"] = overrules
-    conf.read_orthoseg_config(SampleProjectFootball.config_path, **kwargs)
+    conf.read_orthoseg_config(SportsFields.config_path, **kwargs)
 
     image_layer = conf.train.get("image_layer")
     if expected_image_layer is None:
@@ -167,13 +163,13 @@ def test_read_orthoseg_config_train_weights_type():
     """Test if the weights_type parameter is correctly set."""
     # With the default architecture, aerial weights should be available, so weights_type
     # should be set to aerial.
-    conf.read_orthoseg_config(SampleProjectFootball.config_path)
+    conf.read_orthoseg_config(SportsFields.config_path)
     assert conf.train.get("weights_type") == "aerial"
 
     # With an architecture for which aerial weights are available, weights_type should
     # be set to aerial.
     conf.read_orthoseg_config(
-        SampleProjectFootball.config_path,
+        SportsFields.config_path,
         overrules=["model.architecture=inceptionresnetv2+unet"],
     )
     assert conf.train.get("weights_type") == "aerial"
@@ -181,7 +177,7 @@ def test_read_orthoseg_config_train_weights_type():
     # With a non-existing architecture, no aerial weights should be available, so
     # weights_type should fall back to imagenet.
     conf.read_orthoseg_config(
-        SampleProjectFootball.config_path,
+        SportsFields.config_path,
         overrules=["model.architecture=no-weigths+no-weights"],
     )
     assert conf.train.get("weights_type") == "imagenet"

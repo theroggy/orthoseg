@@ -8,7 +8,7 @@ import orthoseg
 from orthoseg.helpers import config_helper as conf
 from orthoseg.validate import _validate_args
 from tests import test_helper
-from tests.test_helper import SampleProjectFootball
+from tests.test_helper import SportsFields
 
 
 def test_validate(tmp_path):
@@ -18,7 +18,7 @@ def test_validate(tmp_path):
     shutil.copytree(test_helper.sampleprojects_dir, testprojects_dir)
 
     # Load project config to init some vars.
-    config_path = footballfields_dir / SampleProjectFootball.config_path.name
+    config_path = footballfields_dir / SportsFields.config_path.name
     conf.read_orthoseg_config(config_path)
 
     # Init + cleanup result dirs
@@ -65,7 +65,7 @@ def test_validate_args(args):
 
 def test_validate_error(tmp_path):
     # Create test project
-    project_dir = test_helper.SampleProjectFootball.project_dir
+    project_dir = test_helper.SportsFields.project_dir
     tmp_project_dir = tmp_path / "footballfields"
     tmp_project_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(src=project_dir / "footballfields_BEFL-2019.ini", dst=tmp_project_dir)

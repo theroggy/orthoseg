@@ -37,8 +37,8 @@ def test_load_images_error_handling():
         match="ERROR in load_images for footballfields_BEFL-2019",
     ):
         load_images(
-            config_path=test_helper.SampleProjectFootball.predict_config_path,
-            config_overrules=["predict.image_pixel_x_size=INVALID_TYPE"],
+            config_path=test_helper.SportsFields.predict_config_path,
+            config_overrules=["predict.image_pixel_width=INVALID_TYPE"],
         )
 
 

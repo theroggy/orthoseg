@@ -51,7 +51,7 @@ def test_predict_error_handling():
         match="ERROR in predict for footballfields_BEFL-2019 on UNEXISTING",
     ):
         predict(
-            config_path=test_helper.SampleProjectFootball.predict_config_path,
+            config_path=test_helper.SportsFields.predict_config_path,
             config_overrules=["predict.image_layer=UNEXISTING"],
         )
 
@@ -109,7 +109,7 @@ def test_predict_use_cache_skip(tmp_path, use_cache, skip_images, exp_area):
     # Download the model
     model_dir = conf.dirs.getpath("model_dir")
     model_dir.mkdir(parents=True, exist_ok=True)
-    test_helper.SampleProjectFootball.download_model(model_dir)
+    test_helper.SportsFields.download_model(model_dir)
 
     # Run predict
     predict(config_path=config_path)
