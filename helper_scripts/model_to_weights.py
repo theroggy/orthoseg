@@ -38,8 +38,7 @@ def convert_model(
         model_hyperparams = mf.load_model_hyperparams(model_path)
         architecture = model_hyperparams["architecture"]["architecture"]
         weights_path = (
-            weights_dir
-            / f"{architecture}_{weight_type}-v{version}_notop.weights.h5"
+            weights_dir / f"{architecture}_{weight_type}-v{version}_notop.weights.h5"
         )
         _encoder, decoder = architecture.split("+")
         smk.utils.save_model_weights_notop(
