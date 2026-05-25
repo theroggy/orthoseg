@@ -228,7 +228,6 @@ def postprocess_prediction_to_file(
     evaluate_mode: bool = False,
     input_image_dir: Path | None = None,
     input_mask_dir: Path | None = None,
-    evaluate_mode_max_accuracy_to_save: float | None = None,
     min_probability: float = 0.5,
     border_pixels_to_ignore: int = 0,
     postprocess: dict | None = None,
@@ -244,7 +243,7 @@ def postprocess_prediction_to_file(
         output_vector_path (Path | None, optional): The path to write the polygonized
             prediction to. If None, no polygonized result is written. Defaults to None.
         output_image_dir (Path | None, optional): The directory to write the prediction
-            to as an image. If None, no image of tyhe prediction is written.
+            to as an image. If None, no image of the prediction is written.
             Defaults to None.
         input_image_filepath (Path | None, optional): The path to the image that was
             predicted image. Is mandatory if output_image_dir is not None.
@@ -258,10 +257,6 @@ def postprocess_prediction_to_file(
         input_mask_dir (Path | None, optional): Only relevant if `evaluate_mode=True`.
             The base directory where mask images for the input images can be found.
             Defaults to None.
-        evaluate_mode_max_accuracy_to_save (float | None, optional): Only relevant if
-            `evaluate_mode=True`. Maximum prediction accuracy for which evaluation
-            outputs should be saved. If the measured accuracy is higher, evaluation
-            artifacts are skipped. Defaults to None.
         min_probability (float): Minimum probability to consider a pixel being of a
             certain class. Defaults to 0.5.
         border_pixels_to_ignore (int, optional): number of pixels at all borders that
@@ -312,7 +307,6 @@ def postprocess_prediction_to_file(
             input_image_filepath=input_image_filepath,
             input_image_dir=input_image_dir,
             input_mask_dir=input_mask_dir,
-            evaluate_mode_max_accuracy_to_save=evaluate_mode_max_accuracy_to_save,
             border_pixels_to_ignore=border_pixels_to_ignore,
             min_probability=min_probability,
             evaluate_mode=evaluate_mode,
@@ -1025,7 +1019,6 @@ def clean_and_save_prediction(
     evaluate_mode: bool = False,
     input_image_dir: Path | None = None,
     input_mask_dir: Path | None = None,
-    evaluate_mode_max_accuracy_to_save: float | None = None,
     border_pixels_to_ignore: int = 0,
     min_probability: float = 0.5,
 ) -> bool:
@@ -1041,9 +1034,6 @@ def clean_and_save_prediction(
         evaluate_mode (bool, optional): _description_. Defaults to False.
         input_image_dir (Optional[Path], optional): _description_. Defaults to None.
         input_mask_dir (Optional[Path], optional): _description_. Defaults to None.
-        evaluate_mode_max_accuracy_to_save (float | None, optional): Maximum
-            prediction accuracy for which evaluation outputs should be saved.
-            Defaults to None.
         border_pixels_to_ignore (int, optional): number of pixels at all borders that
             should be ignored. Defaults to 0.
         min_probability (float): Minimum probability to consider a pixel being of a
@@ -1118,7 +1108,6 @@ def clean_and_save_prediction(
                     output_suffix=output_suffix,
                     input_image_dir=input_image_dir,
                     input_mask_dir=input_mask_dir,
-                    max_similarity_to_save=evaluate_mode_max_accuracy_to_save,
                     class_id=channel_id,
                     class_name=class_name,
                     nb_classes=nb_channels,
