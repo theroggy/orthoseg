@@ -383,10 +383,7 @@ def prepare_traindatasets(
 
             if len(future_errors) > 0:
                 error_messages = [
-                    (
-                        f"[{traindata_type_error}] labeldata_idx={labeldata_idx}: "
-                        f"{error}"
-                    )
+                    (f"[{traindata_type_error}] labeldata_idx={labeldata_idx}: {error}")
                     for traindata_type_error, labeldata_idx, error in future_errors
                 ]
                 raise RuntimeError(

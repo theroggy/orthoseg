@@ -410,7 +410,7 @@ def test_prepare_traindatasets_reuse_prev_images(
 def test_prepare_traindatasets_parallel_local_fetch(tmp_path, monkeypatch):
     """Run prepare_traindatasets with concurrent workers without WMS dependency."""
 
-    def _fake_load_image_to_file(*args, **kwargs):
+    def _fake_load_image_to_file(*args, **kwargs):  # noqa: ARG001
         output_dir = kwargs["output_dir"]
         output_filename = kwargs["output_filename"]
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -422,7 +422,9 @@ def test_prepare_traindatasets_parallel_local_fetch(tmp_path, monkeypatch):
         img.save(image_path, "png")
         return image_path
 
-    monkeypatch.setattr(prep_traindata.image_util, "load_image_to_file", _fake_load_image_to_file)
+    monkeypatch.setattr(
+        prep_traindata.image_util, "load_image_to_file", _fake_load_image_to_file
+    )
 
     classes = TestData.classes
     image_layers_config_path = test_helper.sampleprojects_dir / "imagelayers.ini"
