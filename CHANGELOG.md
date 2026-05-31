@@ -24,6 +24,7 @@
   the default for supported architectures (#327)
 - Add support to reproject a local image layer (#290)
 - Add support to configure an image layer based on a simple dir with images (#337)
+- Improve performance of training data preparation (#344)
 - Improve handling of `switch_axes` and `ssl_verify` (#295)
 - Significant improvements to the documentation (#316, #330,...)
 
