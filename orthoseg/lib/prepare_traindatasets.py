@@ -201,10 +201,10 @@ def prepare_traindatasets(
 
     # Check if the first class is named "background"
     if len(classes) == 0:
-        raise Exception("No classes specified")
+        raise ValueError("No classes specified")
     elif next(iter(classes)).lower() != "background":
         classes_str = pprint.pformat(classes, sort_dicts=False, width=50)
-        raise Exception(
+        raise ValueError(
             f"By convention, the first class must be called background!\n{classes_str}"
         )
 

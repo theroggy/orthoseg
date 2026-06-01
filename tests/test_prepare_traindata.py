@@ -461,3 +461,34 @@ def test_prepare_traindatasets_parallel_local_fetch(tmp_path, monkeypatch):
         mask_paths = list((output_dir / traindata_type / "mask").glob("*.png"))
         assert len(image_paths) == 2
         assert len(mask_paths) == 2
+
+
+def test_prepare_traindatasets_invalid_nb_concurrent_calls(tmp_path):
+    with pytest.raises(ValueError, match="nb_concurrent_calls should be >= 1"):
+        prep_traindata.prepare_traindatasets(
+            label_infos=[],
+            classes=TestData.classes,
+            image_layers={},
+            training_dir=tmp_path / "training",
+            nb_concurrent_calls=0,
+        )
+
+
+@pytest.mark.parametrize(
+    "classes, expected_error",
+    [
+        ({}, "No classes specified"),
+        (
+            {"subject": {"labelnames": ["testlabel1"], "weight": 1, "burn_value": 1}},
+            "By convention, the first class must be called background!",
+        ),
+    ],
+)
+def test_prepare_traindatasets_invalid_classes(tmp_path, classes, expected_error):
+    with pytest.raises(ValueError, match=expected_error):
+        prep_traindata.prepare_traindatasets(
+            label_infos=[],
+            classes=classes,
+            image_layers={},
+            training_dir=tmp_path / "training",
+        )
