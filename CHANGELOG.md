@@ -25,6 +25,8 @@
 - Add support to reproject a local image layer (#290)
 - Add support to configure an image layer based on a simple dir with images (#337)
 - Improve handling of `switch_axes` and `ssl_verify` (#295)
+- When writing evaluation data for training images, don't write results with a
+  similarity score >= 0.999 (#343)
 - Significant improvements to the documentation (#316, #330,...)
 
 ## 0.7.1 (2026-04-13)
