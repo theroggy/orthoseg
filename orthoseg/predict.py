@@ -86,8 +86,6 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
             if image_layer_config is None:
                 raise ValueError(f"{image_layer=} is not configured in image_layers")
 
-        input_image_dir = conf.dirs.getpath("predict_image_input_dir")
-
         # Create base filename of model to use
         # TODO: is force data version the most logical, or rather implement
         #       force weights file or ?
@@ -260,14 +258,22 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
         predict_output_dir = Path(
             f"{conf.dirs['predict_image_output_basedir']}_{predict_out_subdir}"
         )
-        output_vector_dir = conf.dirs.getpath("output_vector_dir")
 
         # Start predict for entire dataset
         # --------------------------------
         # Iterate through each image layer
+        output_vector_dir_str = conf.dirs.get("output_vector_dir")
+        input_image_dir_str = conf.dirs.get("predict_image_input_dir")
         for image_layer in image_layers:
             image_layer_config = conf.image_layers.get(image_layer)
             assert image_layer_config is not None  # already validated above
+
+            layer_input_image_dir = Path(
+                input_image_dir_str.format(predict_image_layer=image_layer)
+            )
+            output_vector_dir = Path(
+                output_vector_dir_str.format(predict_image_layer=image_layer)
+            )
 
             output_vector_name = (
                 f"{best_model['basefilename']}_{best_model['epoch']}_{image_layer}"
@@ -282,7 +288,8 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
             if use_cache == "ifavailable":
                 use_cache = (
                     "yes"
-                    if input_image_dir is not None and input_image_dir.exists()
+                    if layer_input_image_dir is not None
+                    and layer_input_image_dir.exists()
                     else "no"
                 )
 
@@ -292,7 +299,7 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
                 predicter.predict_dir(
                     model=model_for_predict,
                     preprocess_input=preprocess_input,
-                    input_image_dir=input_image_dir,
+                    input_image_dir=layer_input_image_dir,
                     output_image_dir=predict_output_dir,
                     output_vector_path=output_vector_path,
                     classes=hyperparams.architecture.classes,
@@ -352,7 +359,11 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
             simulate=conf.cleanup.getboolean("simulate"),
         )
         cleanup.clean_predictions(
-            output_vector_dir=conf.dirs.getpath("output_vector_dir"),
+            output_vector_dir=Path(
+                conf.dirs.get("output_vector_dir").format(
+                    predict_image_layer="BEFL-2019"
+                )
+            ),
             versions_to_retain=conf.cleanup.getint("prediction_versions_to_retain"),
             simulate=conf.cleanup.getboolean("simulate"),
         )
