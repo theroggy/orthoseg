@@ -29,10 +29,9 @@ def test_postprocess_args(args):
 def test_postprocess_error_handling():
     """Force an error so the general error handler in postprocess is tested."""
     with pytest.raises(
-        RuntimeError,
-        match="ERROR in postprocess for footballfields_BEFL-2019 on UNEXISTING",
+        RuntimeError, match="ERROR in postprocess for sportsfields_01 on UNEXISTING"
     ):
         postprocess(
-            config_path=test_helper.SampleProjectFootball.predict_config_path,
+            config_path=test_helper.SportsFields.config_path,
             config_overrules=["predict.image_layer=UNEXISTING"],
         )

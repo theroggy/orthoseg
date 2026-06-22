@@ -187,6 +187,8 @@ def postprocess_predictions(
     # (input_path) is renamed to ..._orig.gpkg
     if dissolve or reclassify_to_neighbour_query or simplify_algorithm:
         original_file = input_path.parent / f"{input_path.stem}_orig.gpkg"
+        if original_file.exists():
+            gfo.remove(original_file)
         input_path.rename(original_file)
         shutil.copy(src=curr_output_path, dst=input_path)
 
@@ -226,7 +228,7 @@ def _add_output_layer_style(output_path: Path, output_style_path: Path | None) -
     gfo.add_layerstyle(
         path=output_path,
         layer=layer_name,
-        name=output_style_path.name,
+        name=output_style_path.stem,
         qml=qml_style,
         use_as_default=True,
     )

@@ -38,8 +38,7 @@ def convert_model(
         model_hyperparams = mf.load_model_hyperparams(model_path)
         architecture = model_hyperparams["architecture"]["architecture"]
         weights_path = (
-            weights_dir
-            / f"{architecture}_{weight_type}-v{version}_notop_keras2.weights.h5"
+            weights_dir / f"{architecture}_{weight_type}-v{version}_notop.weights.h5"
         )
         _encoder, decoder = architecture.split("+")
         smk.utils.save_model_weights_notop(
@@ -52,17 +51,22 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     os_dir = Path(r"X:\Monitoring\OrthoSeg")
 
+    weights_type = "aerial"
+    weights_type = "topo1873"
+
     # inceptionresnetv2+unet models
-    # rpath = "sportsfields-sample/models/sportsfields-sample_03.4.0_0.88187_169.keras"
+    # rpath = "sportsfields/models/sportsfields_03.4.0_0.88187_169.keras"
     # rpath = "recreationfields/models/recreationfields_34.2.0_0.92718_143.hdf5"
     # rpath = "hedges/models/hedges_13.1.0_0.71852_110.hdf5"
     # rpath = "greenhouses2/models/greenhouses2_26.2.0_0.95529_180.hdf5"
+
+    rpath = "topo1873-DG1/models/topo1873-DG1_14_0.81960_205.hdf5"
 
     # mobilenetv2+linknet model
     # rpath = "sealedsurfaces/models/sealedsurfaces_59.5.0_0.94113_214.keras"
     # rpath = "recreationfields/models/recreationfields_34.2.0_0.88137_79.keras"
     # rpath = "greenhouses2/models/greenhouses2_26.2.0_0.82914_112.keras"
-    rpath = "greenhouses2/models/greenhouses2_25_0.96655_124.hdf5"
+    # rpath = "greenhouses2/models/greenhouses2_25_0.96655_124.hdf5"
 
     model_path = os_dir / rpath
 
@@ -70,7 +74,7 @@ if __name__ == "__main__":
     convert_model(
         model_path,
         weights_dir=weights_dir,
-        weight_type="aerial",
+        weight_type=weights_type,
         version=1,
         include_top=False,
         overwrite=False,

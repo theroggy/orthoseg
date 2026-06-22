@@ -56,7 +56,7 @@ Important arguments:
   ``true``, ``false``, or a path to a certificate bundle.
 
 Use this command to get a working example project structure, sample data, and a
-pretrained model for the football fields example.
+pretrained model for the sportsfields example.
 
 orthoseg_load_images
 --------------------
@@ -139,7 +139,7 @@ Example:
 
 .. code-block:: bash
 
-	orthoseg_predict --config footballfields.ini predict.image_layer=BEFL-2020
+	orthoseg_predict --config sportsfields.ini predict.image_layer=BEFL-2023
 
 orthoseg_postprocess
 --------------------

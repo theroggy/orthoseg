@@ -9,6 +9,7 @@ import orthoseg
 from orthoseg import load_images
 from orthoseg.load_images import _load_images_args
 from tests import test_helper
+from tests.test_helper import SportsFields
 
 
 @pytest.mark.parametrize(
@@ -32,13 +33,10 @@ def test_load_images_args(args):
 
 def test_load_images_error_handling():
     """Force an error so the general error handler in predict is tested."""
-    with pytest.raises(
-        RuntimeError,
-        match="ERROR in load_images for footballfields_BEFL-2019",
-    ):
+    with pytest.raises(RuntimeError, match="ERROR in load_images for sportsfields"):
         load_images(
-            config_path=test_helper.SampleProjectFootball.predict_config_path,
-            config_overrules=["predict.image_pixel_x_size=INVALID_TYPE"],
+            config_path=SportsFields.config_path,
+            config_overrules=["predict.image_pixel_width=INVALID_TYPE"],
         )
 
 
@@ -47,24 +45,40 @@ def test_load_images_error_handling():
     reason="crashes on github CI on windows",
 )
 @pytest.mark.parametrize(
-    "overrules, exp_image_count",
+    "image_layer_overrule, exp_image_count",
     [
-        (["predict.image_layer=BEFL-2019-WMTS"], 2),
-        (["predict.image_layer=OSM-XYZ"], 2),
-        (["predict.image_layer=BEFL-2019"], 2),
+        ("predict.image_layer=BEFL-2025-footballfield-WMTS", 2),
+        ("predict.image_layer=OSM-XYZ-footballfield", 2),
+        ("predict.image_layer=BEFL-2025-sportsfields", 8),
     ],
 )
-def test_load_images(tmp_path, overrules, exp_image_count):
-    # Use footballfields sample project for these end to end tests
+def test_load_images(tmp_path, image_layer_overrule, exp_image_count):
+    # Use sportsfields sample project for these end to end tests
+    if (
+        image_layer_overrule == "predict.image_layer=BEFL-2025-footballfield-WMTS"
+        and "GITHUB_ACTIONS" in os.environ
+    ):
+        pytest.skip("Skipping this test on GITHUB_ACTIONS as it is very slow there.")
+
     testprojects_dir = tmp_path / "sample_projects"
-    footballfields_dir = testprojects_dir / "footballfields"
-    image_cache_dir = testprojects_dir / "_image_cache"
     shutil.copytree(test_helper.sampleprojects_dir, testprojects_dir)
+    project_dir = testprojects_dir / SportsFields.subject
+    _, image_layer = image_layer_overrule.split("=")
+    image_cache_dir = testprojects_dir / "_image_cache" / image_layer
+
+    # Add extra overrules to make images smaller and improve test speed.
+    all_overrules = [
+        image_layer_overrule,
+        "predict.image_pixel_width=128",
+        "predict.image_pixel_height=128",
+        "predict.image_pixel_x_size=2",
+        "predict.image_pixel_y_size=2",
+        "predict.image_pixels_overlap=16",
+    ]
 
     # Run task to load images
     orthoseg.load_images(
-        footballfields_dir / "footballfields_BEFL-2019.ini",
-        config_overrules=overrules,
+        project_dir / SportsFields.config_path.name, config_overrules=all_overrules
     )
 
     # Check if the right number of files was loaded

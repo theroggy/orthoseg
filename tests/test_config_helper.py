@@ -8,7 +8,7 @@ import pytest
 
 from orthoseg.helpers import config_helper as conf
 from orthoseg.lib.prepare_traindatasets import LabelInfo
-from tests.test_helper import SampleProjectFootball, TestData, sampleprojects_dir
+from tests.test_helper import SportsFields, TestData, sampleprojects_dir
 
 
 @pytest.mark.parametrize(
@@ -31,24 +31,56 @@ def test_read_orthoseg_config_error_segment_subject(overrules, exp_error, messag
         exp_error,
         match=message,
     ):
-        conf.read_orthoseg_config(
-            SampleProjectFootball.predict_config_path, overrules=overrules
-        )
+        conf.read_orthoseg_config(SportsFields.config_path, overrules=overrules)
 
 
-def test_read_orthoseg_config_image_layers():
+@pytest.mark.parametrize("image_layer", ["BEFL-2019", "BEFL-2025-footballfield-WMTS"])
+def test_read_orthoseg_config_image_layers(image_layer):
     # Load project config to init some vars.
-    conf.read_orthoseg_config(SampleProjectFootball.predict_config_path)
+    conf.read_orthoseg_config(SportsFields.config_path)
 
-    layer = conf.image_layers.get("BEFL-2019")
+    layer = conf.image_layers.get(image_layer)
     assert layer is not None
     assert layer.get("projection") == pyproj.CRS.from_user_input("epsg:31370")
     assert layer.get("switch_axes") is False
 
-    layer = conf.image_layers.get("BEFL-2019-WMTS")
-    assert layer is not None
-    assert layer.get("projection") == pyproj.CRS.from_user_input("epsg:31370")
-    assert layer.get("switch_axes") is False
+
+def test_read_orthoseg_config_extra_config_files_to_load():
+    # Load the sample project config file that uses extra config files..
+    conf.read_orthoseg_config(SportsFields.config_extra_path)
+
+    # Check if the info from the extra config file was loaded.
+    assert conf.general.get("segment_subject") == "sportsfields"
+    assert conf.predict.getfloat("image_pixel_x_size") == 0.5
+    assert conf.predict.getfloat("image_pixel_y_size") == 0.5
+    assert conf.predict.getint("image_pixel_width") == 512
+    assert conf.predict.getint("image_pixel_height") == 512
+    assert conf.predict.getint("image_pixels_overlap") == 64
+    assert len(conf.train.getdict("classes")) == 4
+
+    # Check that the overruled option is correct
+    assert conf.predict.get("image_layer") == "BEFL-2024"
+
+
+def test_read_orthoseg_config_extra_config_files_to_load_error(tmp_path):
+    """Load a config file with a non-existing extra config file to load."""
+    # Create a config file that specifies a non-existing extra config file to load.
+    config_str = f"""
+        [general]
+        segment_subject = sportsfields
+        extra_config_files_to_load = {tmp_path / "non_existing_config.ini"}
+    """
+    config_path = tmp_path / "test_config.ini"
+    with config_path.open("w") as f:
+        for line in config_str.splitlines():
+            f.write(f"{line.strip()}\n")
+
+    # Load the sample project config file that uses extra config files..
+    with pytest.raises(
+        ValueError,
+        match="Config file specified in extra_config_files_to_load does not exist",
+    ):
+        conf.read_orthoseg_config(config_path)
 
 
 def test_read_orthoseg_config_image_layers_filelayer_dir(tmp_path):
@@ -112,8 +144,8 @@ def test_read_orthoseg_config_image_layers_filelayer_dir_no_file_patterns(tmp_pa
 @pytest.mark.parametrize(
     "overrules, expected_image_layer",
     [
-        (None, "BEFL-2019"),
-        ([], "BEFL-2019"),
+        (None, "BEFL-2025-sportsfields"),
+        ([], "BEFL-2025-sportsfields"),
         (["predict.image_layer=BEFL-2020"], "BEFL-2020"),
     ],
 )
@@ -122,7 +154,7 @@ def test_read_orthoseg_config_predict_overrules(overrules, expected_image_layer)
     kwargs = {}
     if overrules is not None:
         kwargs["overrules"] = overrules
-    conf.read_orthoseg_config(SampleProjectFootball.predict_config_path, **kwargs)
+    conf.read_orthoseg_config(SportsFields.config_path, **kwargs)
 
     image_layer = conf.predict.get("image_layer")
     assert image_layer == expected_image_layer
@@ -136,9 +168,7 @@ def test_read_orthoseg_config_predict_overrules_invalid(overrules):
     """Test with invalid overrules: one without '=' and one without '.'."""
     # Load project config to test overrules.
     with pytest.raises(ValueError, match="invalid config overrule found"):
-        conf.read_orthoseg_config(
-            SampleProjectFootball.predict_config_path, overrules=overrules
-        )
+        conf.read_orthoseg_config(SportsFields.config_path, overrules=overrules)
 
 
 @pytest.mark.parametrize(
@@ -154,7 +184,7 @@ def test_read_orthoseg_config_train_overrules(overrules, expected_image_layer):
     kwargs = {}
     if overrules is not None:
         kwargs["overrules"] = overrules
-    conf.read_orthoseg_config(SampleProjectFootball.config_path, **kwargs)
+    conf.read_orthoseg_config(SportsFields.config_path, **kwargs)
 
     image_layer = conf.train.get("image_layer")
     if expected_image_layer is None:
@@ -167,13 +197,13 @@ def test_read_orthoseg_config_train_weights_type():
     """Test if the weights_type parameter is correctly set."""
     # With the default architecture, aerial weights should be available, so weights_type
     # should be set to aerial.
-    conf.read_orthoseg_config(SampleProjectFootball.config_path)
+    conf.read_orthoseg_config(SportsFields.config_path)
     assert conf.train.get("weights_type") == "aerial"
 
     # With an architecture for which aerial weights are available, weights_type should
     # be set to aerial.
     conf.read_orthoseg_config(
-        SampleProjectFootball.config_path,
+        SportsFields.config_path,
         overrules=["model.architecture=inceptionresnetv2+unet"],
     )
     assert conf.train.get("weights_type") == "aerial"
@@ -181,7 +211,7 @@ def test_read_orthoseg_config_train_weights_type():
     # With a non-existing architecture, no aerial weights should be available, so
     # weights_type should fall back to imagenet.
     conf.read_orthoseg_config(
-        SampleProjectFootball.config_path,
+        SportsFields.config_path,
         overrules=["model.architecture=no-weigths+no-weights"],
     )
     assert conf.train.get("weights_type") == "imagenet"
@@ -192,10 +222,10 @@ def test_read_orthoseg_config_postprocess_output_style_path_default(tmp_path, ca
     # Copy the config to a temporary directory, to be sure no .qml is present.
     tmp_project_dir = tmp_path / "project"
     tmp_project_dir.mkdir()
-    temp_config_path = tmp_project_dir / SampleProjectFootball.config_path.name
-    shutil.copy(SampleProjectFootball.config_path, temp_config_path)
+    temp_config_path = tmp_project_dir / SportsFields.config_path.name
+    shutil.copy(SportsFields.config_path, temp_config_path)
     shutil.copy(sampleprojects_dir / "imagelayers.ini", tmp_path)
-    (tmp_project_dir / "project_defaults_overrule.ini").touch()
+    (tmp_path / "project_defaults_overrule.ini").touch()
 
     conf.read_orthoseg_config(temp_config_path)
 
@@ -212,37 +242,30 @@ def test_read_orthoseg_config_postprocess_output_style_path_custom_missing():
         match=r"postprocess.output_style_path is configured explicitly",
     ):
         conf.read_orthoseg_config(
-            SampleProjectFootball.predict_config_path,
+            SportsFields.config_path,
             overrules=["postprocess.output_style_path=missing-custom-style.qml"],
         )
 
 
 def test_prepare_train_label_infos():
-    labelpolygons_pattern = TestData.dir / "footballfields_{image_layer}_data.gpkg"
-    labellocations_pattern = (
-        TestData.dir / "footballfields_{image_layer}_locations.gpkg"
-    )
+    subject = TestData.subject
+    labelpolygons_pattern = TestData.dir / f"{subject}_{{image_layer}}_data.gpkg"
+    labellocations_pattern = TestData.dir / f"{subject}_{{image_layer}}_locations.gpkg"
     image_layers = {"BEFL-2019": {}, "BEFL-2020": {}, "BEFL-2021": {}, "BEFL-2022": {}}
     label_datasources = {
         "label_ds1_resolution1": {
-            "locations_path": str(
-                TestData.dir / "footballfields_BEFL-2019_locations.gpkg"
-            ),
+            "locations_path": str(TestData.dir / f"{subject}_BEFL-2019_locations.gpkg"),
             "pixel_x_size": 1,
             "pixel_y_size": 2,
             "image_layer": "BEFL-2021",
         },
         "label_ds1_resolution2_None": {
-            "locations_path": str(
-                TestData.dir / "footballfields_BEFL-2019_locations.gpkg"
-            ),
-            "data_path": str(TestData.dir / "footballfields_BEFL-2019_data.gpkg"),
+            "locations_path": str(TestData.dir / f"{subject}_BEFL-2019_locations.gpkg"),
+            "data_path": str(TestData.dir / f"{subject}_BEFL-2019_data.gpkg"),
         },
         "label_ds2": {
-            "locations_path": str(
-                TestData.dir / "footballfields_BEFL-2022_locations.gpkg"
-            ),
-            "polygons_path": str(TestData.dir / "footballfields_BEFL-2022_data.gpkg"),
+            "locations_path": str(TestData.dir / f"{subject}_BEFL-2022_locations.gpkg"),
+            "polygons_path": str(TestData.dir / f"{subject}_BEFL-2022_data.gpkg"),
             "image_layer": "BEFL-2022",
             "pixel_x_size": 5,
             "pixel_y_size": 6,
@@ -260,7 +283,7 @@ def test_prepare_train_label_infos():
         if index == 0:
             # label_ds1_resolution1
             # polygons_path is not overruled, so the pattern-discovered file is used
-            exp = TestData.dir / "footballfields_BEFL-2019_data.gpkg"
+            exp = TestData.dir / f"{subject}_BEFL-2019_data.gpkg"
             assert result.polygons_path.resolve().as_posix() == exp.resolve().as_posix()
             assert result.image_layer == "BEFL-2021"
             assert result.pixel_x_size == 1
@@ -301,10 +324,9 @@ def test_prepare_train_label_infos():
     ],
 )
 def test_prepare_train_label_infos_error(label_datasources, expected_error):
-    labelpolygons_pattern = TestData.dir / "footballfields_{image_layer}_data.gpkg"
-    labellocations_pattern = (
-        TestData.dir / "footballfields_{image_layer}_locations.gpkg"
-    )
+    subject = TestData.subject
+    labelpolygons_pattern = TestData.dir / f"{subject}_{{image_layer}}_data.gpkg"
+    labellocations_pattern = TestData.dir / f"{subject}_{{image_layer}}_locations.gpkg"
     image_layers = {"BEFL-2019": {}, "BEFL-2020": {}, "BEFL-2021": {}, "BEFL-2022": {}}
 
     with pytest.raises(
@@ -320,8 +342,9 @@ def test_prepare_train_label_infos_error(label_datasources, expected_error):
 
 
 def test_prepare_train_label_infos_invalid_layer():
-    labeldata_pattern = TestData.dir / "footballfields_{image_layer}_data.gpkg"
-    labellocation_pattern = TestData.dir / "footballfields_{image_layer}_locations.gpkg"
+    subject = TestData.subject
+    labeldata_pattern = TestData.dir / f"{subject}_{{image_layer}}_data.gpkg"
+    labellocation_pattern = TestData.dir / f"{subject}_{{image_layer}}_locations.gpkg"
     image_layers = {"BEFL-2019": {}}
 
     with pytest.raises(
@@ -336,8 +359,9 @@ def test_prepare_train_label_infos_invalid_layer():
 
 
 def test_search_label_files():
-    labelpolygons_pattern = TestData.dir / "footballfields_{image_layer}_data.gpkg"
-    labellocation_pattern = TestData.dir / "footballfields_{image_layer}_locations.gpkg"
+    subject = TestData.subject
+    labelpolygons_pattern = TestData.dir / f"{subject}_{{image_layer}}_data.gpkg"
+    labellocation_pattern = TestData.dir / f"{subject}_{{image_layer}}_locations.gpkg"
     results = conf._search_label_files(labelpolygons_pattern, labellocation_pattern)
 
     assert len(results) == 2
@@ -346,15 +370,16 @@ def test_search_label_files():
 
 
 def test_search_label_files_invalid_dir():
+    subject = TestData.subject
     invalid_dir = TestData.dir / "unexisting"
-    labelpolygons_pattern = TestData.dir / "footballfields_{image_layer}_data.gpkg"
-    labellocation_pattern = invalid_dir / "footballfields_{image_layer}_locations.gpkg"
+    labelpolygons_pattern = TestData.dir / f"{subject}_{{image_layer}}_data.gpkg"
+    labellocation_pattern = invalid_dir / f"{subject}_{{image_layer}}_locations.gpkg"
 
     with pytest.raises(ValueError, match="Label dir doesn't exist"):
         _ = conf._search_label_files(labelpolygons_pattern, labellocation_pattern)
 
-    labelpolygons_pattern = invalid_dir / "footballfields_{image_layer}_data.gpkg"
-    labellocation_pattern = TestData.dir / "footballfields_{image_layer}_locations.gpkg"
+    labelpolygons_pattern = invalid_dir / f"{subject}_{{image_layer}}_data.gpkg"
+    labellocation_pattern = TestData.dir / f"{subject}_{{image_layer}}_locations.gpkg"
 
     with pytest.raises(ValueError, match="Label dir doesn't exist"):
         _ = conf._search_label_files(labelpolygons_pattern, labellocation_pattern)
@@ -362,19 +387,20 @@ def test_search_label_files_invalid_dir():
 
 def test_unformat():
     result = conf._unformat(
-        "footballfields_BEFL-2018_data.gpkg",
-        pattern="footballfields_{image_layer}_data.gpkg",
+        "test-subject_BEFL-2018_data.gpkg",
+        pattern="test-subject_{image_layer}_data.gpkg",
     )
     assert result == {"image_layer": "BEFL-2018"}
 
 
 def test_unformat_error():
     with pytest.raises(
-        ValueError, match=re.escape("pattern fields_{image_layer}_data.gpkg not found")
+        ValueError,
+        match=re.escape("pattern test-subject_{image_layer}_data.gpkg not found"),
     ):
         _ = conf._unformat(
-            "fields_BEFL-2018_polygons.gpkg",
-            pattern="fields_{image_layer}_data.gpkg",
+            "test-subject_BEFL-2018_polygons.gpkg",
+            pattern="test-subject_{image_layer}_data.gpkg",
         )
 
 
