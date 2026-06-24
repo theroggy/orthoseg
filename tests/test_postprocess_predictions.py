@@ -68,15 +68,15 @@ def test_clean_vectordata(tmpdir):
     assert len(result_gdf) == 616
 
 
-def create_projects_dir(tmp_path: Path) -> Path:
+def create_project_dir(tmp_path: Path, subject: str) -> Path:
     testproject_dir = tmp_path / "orthoseg_test_postprocess"
-    project_dir = testproject_dir / "footballfields"
+    project_dir = testproject_dir / subject
 
     shutil.rmtree(path=testproject_dir, ignore_errors=True)
     project_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(
         src=test_helper.sampleprojects_dir / "project_template/projectfile.ini",
-        dst=project_dir / "footballfields.ini",
+        dst=project_dir / f"{subject}.ini",
     )
     shutil.copyfile(
         src=test_helper.sampleprojects_dir / "imagelayers.ini",
@@ -85,20 +85,14 @@ def create_projects_dir(tmp_path: Path) -> Path:
     return project_dir
 
 
-def create_prediction_file(output_vector_dir: Path) -> Path:
+def create_prediction_file(output_vector_dir: Path, subject: str) -> Path:
     imagelayer = "BEFL-2019"
     prediction_dir = output_vector_dir / imagelayer
     prediction_dir.mkdir(parents=True, exist_ok=True)
-    output_vector_path = prediction_dir / f"footballfields_01_201_{imagelayer}.gpkg"
+    output_vector_path = prediction_dir / f"{subject}_01_201_{imagelayer}.gpkg"
 
-    footballfields = {
-        "classname": [
-            "footballfields",
-            "footballfields",
-            "footballfields",
-            "footballfields",
-            "footballfields",
-        ],
+    predictions = {
+        "classname": [subject] * 5,
         "geometry": [
             shapely.wkt.loads(
                 "MULTIPOLYGON (((175056.375 176371.125, 175056.375 176370.875, 175056.625 176370.875, 175056.625 176371.125, 175056.375 176371.125)))"  # noqa: E501
@@ -117,10 +111,8 @@ def create_prediction_file(output_vector_dir: Path) -> Path:
             ),
         ],
     }
-    footballfields_gdf = gpd.GeoDataFrame(
-        footballfields, geometry="geometry", crs=31370
-    )
-    gfo.to_file(gdf=footballfields_gdf, path=output_vector_path)
+    predictions_gdf = gpd.GeoDataFrame(predictions, geometry="geometry", crs=31370)
+    gfo.to_file(gdf=predictions_gdf, path=output_vector_path)
     return output_vector_path
 
 
@@ -189,11 +181,14 @@ def test_postprocess_predictions(
     keep_intermediary_files: bool,
 ):
     # Create test project
-    project_dir = create_projects_dir(tmp_path=tmp_path)
+    subject = "test-subject"
+    project_dir = create_project_dir(tmp_path=tmp_path, subject=subject)
 
     # Creating dummy files
     output_vector_dir = project_dir / "output_vector"
-    output_vector_path = create_prediction_file(output_vector_dir=output_vector_dir)
+    output_vector_path = create_prediction_file(
+        output_vector_dir=output_vector_dir, subject=subject
+    )
     output_orig_path = (
         output_vector_path.parent / f"{output_vector_path.stem}_orig.gpkg"
     )
@@ -236,6 +231,75 @@ def test_postprocess_predictions(
         assert output_reclass_path.exists()
 
 
+def test_postprocess_predictions_output_style_added(tmp_path: Path):
+    output_vector_dir = tmp_path / "output_vector"
+    subject = "test-subject"
+    output_vector_path = create_prediction_file(
+        output_vector_dir=output_vector_dir, subject=subject
+    )
+    output_style_path = tmp_path / f"{subject}.qml"
+    output_style_path.write_text("<qgis></qgis>", encoding="utf-8")
+
+    postp.postprocess_predictions(
+        input_path=output_vector_path,
+        output_path=output_vector_path,
+        dissolve=False,
+        output_style_path=output_style_path,
+    )
+
+    styles = gfo.get_layerstyles(output_vector_path)
+    assert len(styles) == 1
+    assert styles.iloc[0]["styleName"] == output_style_path.stem
+    layer_name = gfo.get_only_layer(output_vector_path)
+    assert styles.iloc[0]["f_table_name"] == layer_name
+
+
+def test_postprocess_predictions_output_style_missing(tmp_path: Path):
+    output_vector_dir = tmp_path / "output_vector"
+    subject = "test-subject"
+    output_vector_path = create_prediction_file(
+        output_vector_dir=output_vector_dir, subject=subject
+    )
+    output_style_path = tmp_path / f"{subject}.qml"
+
+    with pytest.raises(FileNotFoundError, match="output_style_path doesn't exist"):
+        postp.postprocess_predictions(
+            input_path=output_vector_path,
+            output_path=output_vector_path,
+            dissolve=False,
+            output_style_path=output_style_path,
+        )
+
+
+def test_postprocess_predictions_output_style_non_gpkg(tmp_path: Path):
+    subject = "test-subject"
+    output_vector_path = tmp_path / f"{subject}.geojson"
+    gdf = gpd.GeoDataFrame(
+        {
+            "classname": ["footballfields"],
+            "geometry": [
+                shapely.wkt.loads(
+                    "MULTIPOLYGON (((175056.375 176371.125, 175056.375 176370.875, 175056.625 176370.875, 175056.625 176371.125, 175056.375 176371.125)))"  # noqa: E501
+                )
+            ],
+        },
+        geometry="geometry",
+        crs=31370,
+    )
+    gfo.to_file(gdf=gdf, path=output_vector_path)
+
+    output_style_path = tmp_path / f"{subject}.qml"
+    output_style_path.write_text("<qgis></qgis>", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="output is not a GeoPackage"):
+        postp.postprocess_predictions(
+            input_path=output_vector_path,
+            output_path=output_vector_path,
+            dissolve=False,
+            output_style_path=output_style_path,
+        )
+
+
 @pytest.mark.parametrize(
     "max_similarity_to_save, expect_saved",
     [(0.999, False), (1.0, True)],
@@ -250,7 +314,7 @@ def test_postprocess_for_evaluation(
     )
 
     image_pred_uint8_cleaned_bin = mask_arr * 255
-    image_pred_filepath = tmp_path / "input_tile_footballfields_pred.tif"
+    image_pred_filepath = tmp_path / "input_tile_test-subject_pred.tif"
     write_test_raster(
         output_path=image_pred_filepath,
         image_arr=image_pred_uint8_cleaned_bin,
@@ -265,10 +329,10 @@ def test_postprocess_for_evaluation(
         image_pred_filepath=image_pred_filepath,
         image_pred_uint8_cleaned_bin=image_pred_uint8_cleaned_bin,
         class_id=1,
-        class_name="footballfields",
+        class_name="test-subject",
         nb_classes=2,
         output_dir=tmp_path,
-        output_suffix="_footballfields",
+        output_suffix="_test-subject",
         input_image_dir=input_image_dir,
         input_mask_dir=input_mask_dir,
         max_similarity_to_save=max_similarity_to_save,
@@ -276,9 +340,9 @@ def test_postprocess_for_evaluation(
     )
 
     # Check results
-    eval_pred_paths = sorted(tmp_path.glob("*_input_tile_footballfields_pred.tif"))
-    eval_input_paths = sorted(tmp_path.glob("*_input_tile_footballfields.tif"))
-    eval_mask_paths = sorted(tmp_path.glob("*_input_tile_footballfields_mask.tif"))
+    eval_pred_paths = sorted(tmp_path.glob("*_input_tile_test-subject_pred.tif"))
+    eval_input_paths = sorted(tmp_path.glob("*_input_tile_test-subject.tif"))
+    eval_mask_paths = sorted(tmp_path.glob("*_input_tile_test-subject_mask.tif"))
 
     if expect_saved:
         assert len(eval_pred_paths) == 1

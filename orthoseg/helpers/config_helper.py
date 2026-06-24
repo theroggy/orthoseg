@@ -30,6 +30,9 @@ from orthoseg.util.image_util import (
     has_switched_axes,
 )
 
+# Activate gdal to raise exceptions instead of printing/returning errors/errorcodes
+gdal.UseExceptions()
+
 # Get a logger...
 logger = logging.getLogger(__name__)
 
@@ -181,6 +184,33 @@ def read_orthoseg_config(config_path: Path, overrules: list[str] | None = None):
             f"dirs.projects_dir was relative: is resolved to {projects_dir_absolute}"
         )
         dirs["projects_dir"] = projects_dir_absolute.as_posix()
+
+    # If postprocess.output_style_path is a relative path, resolve it towards the
+    # location of the project config file.
+    output_style_path_is_default_value = (
+        True
+        if postprocess.get("output_style_path") == f"{segment_subject}.qml"
+        else False
+    )
+    output_style_path = postprocess.getpath("output_style_path")
+    if output_style_path is not None and not output_style_path.is_absolute():
+        output_style_path_absolute = (config_path.parent / output_style_path).resolve()
+        postprocess["output_style_path"] = output_style_path_absolute.as_posix()
+        output_style_path = output_style_path_absolute
+
+    if output_style_path is not None and not output_style_path.exists():
+        if output_style_path_is_default_value:
+            logger.warning(
+                "postprocess.output_style_path is set to the default value and file "
+                f"doesn't exist (warning only): {output_style_path}"
+            )
+            # Set to None so that the postprocess will not try to use it.
+            postprocess["output_style_path"] = None
+        else:
+            raise FileNotFoundError(
+                "postprocess.output_style_path is configured explicitly, but file "
+                f"doesn't exist: {output_style_path}"
+            )
 
     # Some version-specific defaults
     if train.get("save_format") is None:
@@ -368,9 +398,13 @@ def _read_layer_config(layer_config_filepath: Path) -> dict:
         ].getint("nb_concurrent_calls", fallback=1)
 
         # Check if a region of interest is specified as file or bbox
-        image_layers[image_layer]["roi_filepath"] = layer_config[image_layer].getpath(
-            "roi_filepath", fallback=None
-        )
+        roi_filepath = layer_config[image_layer].getpath("roi_filepath", fallback=None)
+        if roi_filepath is not None and not roi_filepath.is_absolute():
+            # path is relative, so resolve towards the location of imagelayers file
+            roi_filepath = layer_config_filepath.parent / roi_filepath
+            roi_filepath = roi_filepath.resolve()
+        image_layers[image_layer]["roi_filepath"] = roi_filepath
+
         bbox_tuple = None
         if layer_config.has_option(image_layer, "bbox"):
             bbox_list = layer_config[image_layer].getlist("bbox")
@@ -698,10 +732,6 @@ def _gdal_virtual_file_path(layersource) -> Path:
     )
     gdal_options = gdal.TranslateOptions(format="VRT")
 
-    gdal.Translate(
-        str(output_path),
-        input_url,
-        options=gdal_options,
-    )
+    gdal.Translate(destName=str(output_path), srcDS=input_url, options=gdal_options)
 
     return output_path
