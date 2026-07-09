@@ -10,6 +10,7 @@
 - Support for all optimizers offered by keras was added, but the setting has now become 
   case sensitive. For Keras >= 3, AdamW is now the default optimizer
   (#334, #335, #338).
+- The minimal version of geofileops is now 0.11 (#350)
 
 ### Improvements
 
@@ -31,6 +32,10 @@
 - When writing evaluation data for training images, don't write results with a
   similarity score >= 0.999 (#343)
 - Significant improvements to the documentation (#316, #330,...)
+
+### Bugs fixed
+
+- Fix postprocessing for cases where architecture_id != 0 (#351)
 
 ## 0.7.1 (2026-04-13)
 
