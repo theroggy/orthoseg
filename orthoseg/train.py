@@ -18,6 +18,24 @@ from orthoseg.util import log_util
 logger = logging.getLogger(__name__)
 
 
+def _set_dtype_policy_for_train(dtype_policy_raw: str | None):
+    """Resolve and apply dtype policy for training.
+
+    Args:
+        dtype_policy_raw: Raw config value from `train.dtype_policy`.
+            - `None` or empty: defaults to float32.
+            - otherwise: apply the policy value explicitly.
+    """
+    dtype_policy = "" if dtype_policy_raw is None else dtype_policy_raw.strip()
+
+    if dtype_policy == "":
+        dtype_policy = "float32"
+        logger.info("train.dtype_policy is unset, set keras dtype policy to float32")
+
+    logger.info(f"Set keras dtype policy for training: {dtype_policy}")
+    mf.set_dtype_policy(dtype_policy)
+
+
 def _train_args(args) -> argparse.Namespace:
     # Interprete arguments
     parser = argparse.ArgumentParser(add_help=False)
@@ -53,8 +71,8 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
     """Run a training session for the config specified.
 
     Args:
-        config_path (Path): Path to the config file to use.
-        config_overrules (list[str], optional): list of config options that will
+        config_path: Path to the config file to use.
+        config_overrules: list of config options that will
             overrule other ways to supply configuration. They should be specified in the
             form of "<section>.<key>=<value>". Defaults to None.
     """
@@ -70,6 +88,8 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
     )
     global logger  # noqa: PLW0603
     logger = log_util.main_log_init(conf.dirs.getpath("log_dir"), __name__)
+
+    _set_dtype_policy_for_train(conf.train.get("dtype_policy", None))
 
     # Log start
     logger.info(f"Start train for config {config_path.stem}")
@@ -202,7 +222,7 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
             if best_model_curr_train_version is not None:
                 logger.info(
                     "PRELOAD model + continue TRAINING: "
-                    f"{best_model_curr_train_version['filename']}"
+                    f"{best_model_curr_train_version.filename}"
                 )
                 train_needed = True
             else:
@@ -230,20 +250,20 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
                 try:
                     # TODO: move the hyperparams filename formatting to get_models...
                     logger.info(
-                        f"Load model + weights from {best_recent_model['filepath']}"
+                        f"Load model + weights from {best_recent_model.filepath}"
                     )
                     best_model, preprocess_input = mf.load_model(
-                        best_recent_model["filepath"], compile_model=False
+                        best_recent_model.filepath, compile_model=False
                     )
                     best_hyperparams_path = (
-                        best_recent_model["filepath"].parent
-                        / f"{best_recent_model['basefilename']}_hyperparams.json"
+                        best_recent_model.filepath.parent
+                        / f"{best_recent_model.basefilename}_hyperparams.json"
                     )
                     best_hyperparams = mh.HyperParams(path=best_hyperparams_path)
                     logger.info("Loaded model, weights and params")
 
                     # Prepare output subdir to be used for predictions
-                    predict_out_subdir = best_recent_model["filepath"].stem
+                    predict_out_subdir = best_recent_model.filepath.stem
 
                     # Predict training dataset
                     predicter.predict_dir(
@@ -292,13 +312,13 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
             logger.info("Start training")
             model_preload_filepath = None
             if best_model_curr_train_version is not None:
-                model_preload_filepath = best_model_curr_train_version["filepath"]
+                model_preload_filepath = best_model_curr_train_version.filepath
             elif conf.train.getboolean("preload_with_previous_traindata"):
                 best_model_for_architecture = mh.get_best_model(
                     model_dir=model_dir, segment_subject=segment_subject
                 )
                 if best_model_for_architecture is not None:
-                    model_preload_filepath = best_model_for_architecture["filepath"]
+                    model_preload_filepath = best_model_for_architecture.filepath
 
             # Combine all hyperparameters in hyperparams object
             hyperparams = mh.HyperParams(
@@ -334,20 +354,20 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
         # Now predict on the train,... data
         logger.info(
             "PREDICT test data with best model: "
-            f"{best_model_curr_train_version['filename']}"
+            f"{best_model_curr_train_version.filename}"
         )
 
         # Load prediction model...
         logger.info(
-            f"Load model + weights from {best_model_curr_train_version['filepath']}"
+            f"Load model + weights from {best_model_curr_train_version.filepath}"
         )
         model, preprocess_input = mf.load_model(
-            best_model_curr_train_version["filepath"], compile_model=False
+            best_model_curr_train_version.filepath, compile_model=False
         )
         logger.info("Loaded model + weights")
 
         # Prepare output subdir to be used for predictions
-        predict_out_subdir = best_model_curr_train_version["filepath"].stem
+        predict_out_subdir = best_model_curr_train_version.filepath.stem
 
         # Predict training dataset
         predicter.predict_dir(

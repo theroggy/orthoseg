@@ -23,7 +23,7 @@ setuptools.setup(
     include_package_data=True,
     install_requires=[
         "gdal",
-        "geofileops>=0.11",
+        "geofileops>=0.12",
         "geopandas>=1.0",
         "matplotlib",
         "numpy",
@@ -36,7 +36,7 @@ setuptools.setup(
         "segmodels-keras",
         "shapely>=2",
         "simplification",
-        "tensorflow>=2.8",
+        "tensorflow>=2.10",
     ],
     entry_points="""
             [console_scripts]

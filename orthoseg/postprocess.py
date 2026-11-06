@@ -15,6 +15,56 @@ from orthoseg.util import log_util
 logger = logging.getLogger(__name__)
 
 
+def _apply_postprocess(input_path: Path, output_path: Path) -> None:
+    """Apply postprocessing to the prediction output file using config settings.
+
+    Reads postprocessing config from the [postprocess] section and applies
+    the full postprocessing pipeline to the vector file.
+
+    Args:
+        input_path: Path to the input vector file to postprocess.
+        output_path: Path to the output vector file.
+    """
+    # Prepare some parameters for the postprocessing
+    nb_parallel = conf.general.getint("nb_parallel", -1)
+
+    keep_original_file = conf.postprocess.getboolean("keep_original_file", True)
+    keep_intermediary_files = conf.postprocess.getboolean(
+        "keep_intermediary_files", False
+    )
+    dissolve = conf.postprocess.getboolean("dissolve", True)
+    dissolve_tiles_path = conf.postprocess.getpath("dissolve_tiles_path")
+    reclassify_query = conf.postprocess.get("reclassify_to_neighbour_query")
+    if reclassify_query is not None:
+        reclassify_query = reclassify_query.replace("\n", " ")
+
+    simplify_algorithm = conf.postprocess.get("simplify_algorithm")
+    simplify_tolerance = conf.postprocess.geteval("simplify_tolerance")
+    simplify_lookahead = conf.postprocess.get("simplify_lookahead")
+    if simplify_lookahead is not None:
+        simplify_lookahead = int(simplify_lookahead)
+    clip_path = conf.postprocess.getpath("clip_path")
+    output_style_path = conf.postprocess.getpath("output_style_path")
+
+    # Apply postprocessing
+    postp.postprocess_predictions(
+        input_path=input_path,
+        output_path=output_path,
+        clip_path=clip_path,
+        dissolve=dissolve,
+        dissolve_tiles_path=dissolve_tiles_path,
+        reclassify_to_neighbour_query=reclassify_query,
+        simplify_algorithm=simplify_algorithm,
+        simplify_tolerance=simplify_tolerance,
+        simplify_lookahead=simplify_lookahead,
+        output_style_path=output_style_path,
+        keep_original_file=keep_original_file,
+        keep_intermediary_files=keep_intermediary_files,
+        nb_parallel=nb_parallel,
+        force=False,
+    )
+
+
 def _postprocess_args(args) -> argparse.Namespace:
     # Interprete arguments
     parser = argparse.ArgumentParser(add_help=False)
@@ -50,13 +100,13 @@ def postprocess(config_path: Path, config_overrules: list[str] | None = None) ->
     """Postprocess the output of a prediction for the config specified.
 
     Args:
-        config_path (Path): Path to the config file.
-        config_overrules (list[str], optional): list of config options that will
+        config_path: Path to the config file.
+        config_overrules: list of config options that will
             overrule other ways to supply configuration. They should be specified in the
             form of "<section>.<key>=<value>". Defaults to None.
 
     Returns:
-        Path: The path to the postprocessed output file.
+        The path to the postprocessed output file.
 
     """
     # Init
@@ -102,61 +152,33 @@ def postprocess(config_path: Path, config_overrules: list[str] | None = None) ->
                 f"No best model found in {conf.dirs.getpath('model_dir')}"
             )
 
-        model_name = best_model["basefilename"]
+        model_name = best_model.basefilename
         message = f"Start postprocess for {model_name} on {image_layer}"
         email_helper.sendmail(message)
 
         # Input file  the "most recent" prediction result dir for this subject
         output_vector_dir = conf.dirs.getpath("output_vector_dir")
-        output_vector_name = (
-            f"{best_model['basefilename']}_{best_model['epoch']}_"
-            f"{conf.predict['image_layer']}"
-        )
-        output_vector_path = output_vector_dir / f"{output_vector_name}.gpkg"
+        image_layer = conf.predict["image_layer"]
+        output_stem = f"{best_model.base_output_name}_{image_layer}"
+        output_predict_path = output_vector_dir / f"{output_stem}_predict.gpkg"
+        output_postp_path = output_vector_dir / f"{output_stem}.gpkg"
 
-        # Prepare some parameters for the postprocessing
-        nb_parallel = conf.general.getint("nb_parallel", -1)
+        # Backward compat: fall back to old-style name that had epoch before image_layer
+        if not output_predict_path.exists():
+            name = f"{best_model.base_output_legacy_name}_{image_layer}.gpkg"
+            output_legacy_path = output_vector_dir / name
+            if output_legacy_path.exists():
+                output_predict_path = output_legacy_path
 
-        keep_original_file = conf.postprocess.getboolean("keep_original_file", True)
-        keep_intermediary_files = conf.postprocess.getboolean(
-            "keep_intermediary_files", True
-        )
-        dissolve = conf.postprocess.getboolean("dissolve", True)
-        dissolve_tiles_path = conf.postprocess.getpath("dissolve_tiles_path")
-        reclassify_query = conf.postprocess.get("reclassify_to_neighbour_query")
-        if reclassify_query is not None:
-            reclassify_query = reclassify_query.replace("\n", " ")
-
-        simplify_algorithm = conf.postprocess.get("simplify_algorithm")
-        simplify_tolerance = conf.postprocess.geteval("simplify_tolerance")
-        simplify_lookahead = conf.postprocess.get("simplify_lookahead")
-        if simplify_lookahead is not None:
-            simplify_lookahead = int(simplify_lookahead)
-        output_style_path = conf.postprocess.getpath("output_style_path")
-
-        # Go!
-        postp.postprocess_predictions(
-            input_path=output_vector_path,
-            output_path=output_vector_path,
-            keep_original_file=keep_original_file,
-            keep_intermediary_files=keep_intermediary_files,
-            dissolve=dissolve,
-            dissolve_tiles_path=dissolve_tiles_path,
-            reclassify_to_neighbour_query=reclassify_query,
-            simplify_algorithm=simplify_algorithm,
-            simplify_tolerance=simplify_tolerance,
-            simplify_lookahead=simplify_lookahead,
-            output_style_path=output_style_path,
-            nb_parallel=nb_parallel,
-            force=False,
-        )
+        # Apply postprocessing
+        _apply_postprocess(output_predict_path, output_postp_path)
 
         # Log and send mail
         message = f"Completed postprocess for {model_name} on {image_layer}"
         logger.info(message)
         email_helper.sendmail(message)
 
-        return output_vector_path
+        return output_postp_path
 
     except Exception as ex:
         if model_name is None:

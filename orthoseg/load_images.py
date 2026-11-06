@@ -55,10 +55,10 @@ def load_images(
     """Load and cache images for a segmentation project.
 
     Args:
-        config_path (Path): Path to the projects config file.
-        load_testsample_images (bool, optional): True to only load testsample
+        config_path: Path to the projects config file.
+        load_testsample_images: True to only load testsample
             images. Defaults to False.
-        config_overrules (list[str], optional): list of config options that will
+        config_overrules: list of config options that will
             overrule other ways to supply configuration. They should be specified in the
             form of "<section>.<key>=<value>". Defaults to None.
     """
@@ -163,6 +163,7 @@ def load_images(
             nb_concurrent_calls=nb_concurrent_calls,
             cron_schedule=download_cron_schedule,
             image_format=image_format,
+            tiff_compress="JPEG",  # TODO: make this configurable in the config file
             pixels_overlap=image_pixels_overlap,
             nb_images_to_skip=nb_images_to_skip,
             ssl_verify=ssl_verify,

@@ -11,6 +11,10 @@
   case sensitive. For Keras >= 3, AdamW is now the default optimizer
   (#334, #335, #338).
 - The minimal version of geofileops is now 0.11 (#350)
+- For standard predictions, the "epoch" is removed from the output files, as it is not
+  really relevant (#356)
+- Running `predict` now (by default) includes postprocessing the output. If you want to
+  keep doing this in a seperate step you can specify `--no_postprocess` (#).
 
 ### Improvements
 
@@ -22,11 +26,21 @@
 - Use keras.applications `preprocess_input` functions to prepare inputs (#314)
 - Add support to finetune models using weights pretrained on aerial images. This becomes
   the default for supported architectures (#327)
+- Add support for mixed dtype in train and predict (#361)
 - Add support to reproject a local image layer (#290)
 - Add support to configure an image layer based on a simple dir with images (#337)
 - Add postprocessing option to add a qml style to the output layer (#347)
+- Add postprocessing option to clip the output layer to a layer specified (#359)
 - Replace footballfields sample project by sportsfields to have a multiclass and
   multilayer example for tests and documentation (#341)
+- Speed up train and predict by reading images using using tf.data Datasets
+  (#372, #373)
+- Small improvements to train: log monitor metric to csv, robustness improvements in
+  prepare_trainingsdata,... (#369)
+- If a layer cache directory with different image size but same resolution exists,
+  use that when predicting (#362)
+- Avoid that scripts started with scriptrunner need execute flag on linux (#370)
+- Use SSL bundle from REQUESTS_CA_BUNDLE for WMS fetching if specified (#367)
 - Improve performance of training data preparation (#344)
 - Improve handling of `switch_axes` and `ssl_verify` (#295)
 - When writing evaluation data for training images, don't write results with a

@@ -2,6 +2,7 @@
 
 import argparse
 import configparser
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -94,18 +95,22 @@ def main():
             # Run the script and print output in realtime
             wait_message_printed = False
             logger.info(f"Run script {script_path}")
-            cmd = [script_path]
+            if os.name == "nt":
+                shell = True
+                cmd = [script_path]
+            else:
+                shell = False
+                cmd = ["bash", str(script_path)]
 
             process = subprocess.Popen(
                 cmd,
-                shell=True,
+                shell=shell,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 encoding="utf-8",
             )
-            # ,creationflags=subprocess.CREATE_NO_WINDOW)
 
             still_running = True
             while still_running:
@@ -152,11 +157,11 @@ def load_scriptrunner_config(
     """Load the configuration of scriptrunner.
 
     Args:
-        config_path (str): config file to load.
-        script_dir (Path): _description_
+        config_path: config file to load.
+        script_dir: _description_
 
     Returns:
-        configparser.ConfigParser: _description_
+        _description_
     """
     # Load defaults first
     scriptrunner_py_dir = Path(__file__).resolve().parent

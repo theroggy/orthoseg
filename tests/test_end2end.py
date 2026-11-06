@@ -127,8 +127,8 @@ def test_3_train():
     )
 
     assert best_model is not None
-    assert best_model["traindata_id"] == traindata_id_result
-    assert best_model["epoch"] == 0
+    assert best_model.traindata_id == traindata_id_result
+    assert best_model.epoch == 0
 
 
 @pytest.mark.order(after="test_2_load_images")
@@ -154,16 +154,14 @@ def test_4_predict():
         assert not result_vector_dir.exists()
 
     # Run task to predict
-    orthoseg.predict(config_path, config_overrules=overrules)
+    result_vector_path = orthoseg.predict(
+        config_path, config_overrules=overrules, postprocess=False
+    )
 
     # Check results
-    result_vector_path = (
-        result_vector_dir / f"{SportsFields.subject}_01_276_BEFL-2025-sportsfields.gpkg"
-    )
     assert result_vector_path.exists()
     result_gdf = gfo.read_file(result_vector_path)
-    expected_count = 27
-    assert len(result_gdf) == expected_count
+    assert len(result_gdf) == SportsFields.expected_output_count
 
 
 @pytest.mark.order(after="test_4_predict")
@@ -180,12 +178,11 @@ def test_5_postprocess():
     # Check results
     assert output_vector_path.exists()
     result_gdf = gfo.read_file(output_vector_path)
-    expected_count = 22
-    assert len(result_gdf) == expected_count
+    assert len(result_gdf) == SportsFields.expected_postprocess_count
 
     # The output file should contain the style from the project dir
     styles = gfo.get_layerstyles(output_vector_path)
     assert len(styles) == 1
     layer_name = gfo.get_only_layer(output_vector_path)
-    assert styles.iloc[0]["f_table_name"] == layer_name
-    assert styles.iloc[0]["styleName"] == SportsFields.subject
+    assert styles[0].layer == layer_name
+    assert styles[0].name == SportsFields.subject

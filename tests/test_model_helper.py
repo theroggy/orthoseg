@@ -1,13 +1,42 @@
 """Tests for the model_helper module."""
 
+import csv
 import re
 from pathlib import Path
 
+import keras
 import pytest
 
 from orthoseg._compat import KERAS_GTE_3
 from orthoseg.helpers import config_helper as conf
 from orthoseg.model import model_helper
+
+
+def test_csv_logger_ext_logs_custom_formula(tmp_path):
+    csv_path = tmp_path / "training.csv"
+    logs = {"accuracy": 0.8, "val_accuracy": 0.6}
+    logger = model_helper.CSVLoggerExt(
+        csv_path,
+        separator=";",
+        custom_metrics={
+            "monitor_metric": "({accuracy}+{val_accuracy})/2",
+            "accuracy_alias": "accuracy",
+        },
+    )
+
+    logger.set_model(keras.Sequential())
+    logger.on_train_begin()
+    logger.on_epoch_end(0, logs)
+    logger.on_train_end()
+
+    with csv_path.open(newline="") as csv_file:
+        row = next(csv.DictReader(csv_file, delimiter=";"))
+
+    assert row["accuracy"] == "0.8"
+    assert row["val_accuracy"] == "0.6"
+    assert row["monitor_metric"] == "0.7"
+    assert row["accuracy_alias"] == "0.8"
+    assert logs == {"accuracy": 0.8, "val_accuracy": 0.6}
 
 
 @pytest.mark.parametrize(
@@ -53,7 +82,7 @@ def test_get_best_model(tmp_path, input_names, expected_name):
     else:
         if not KERAS_GTE_3 and expected_name.endswith(".keras"):
             expected_name = expected_name.replace(".keras", ".hdf5")
-        assert Path(best_model["filepath"]).name == expected_name
+        assert Path(best_model.filepath).name == expected_name
 
 
 @pytest.mark.parametrize(
@@ -66,6 +95,8 @@ def test_get_best_model(tmp_path, input_names, expected_name):
                 "monitor_metric_accuracy": 0.8,
                 "epoch": 10,
                 "save_format": "h5",
+                "base_output_name": "subj_01",
+                "base_output_legacy_name": "subj_01_10",
             },
         ),
         (
@@ -75,10 +106,34 @@ def test_get_best_model(tmp_path, input_names, expected_name):
                 "monitor_metric_accuracy": 0.9,
                 "epoch": 20,
                 "save_format": "keras",
+                "base_output_name": "subj_02",
+                "base_output_legacy_name": "subj_02_20",
             },
         ),
         (
             "subj_3_0.85_15_tf",
+            {
+                "traindata_id": 3,
+                "monitor_metric_accuracy": 0.85,
+                "epoch": 15,
+                "save_format": "tf",
+                "base_output_name": "subj_03",
+                "base_output_legacy_name": "subj_03_15",
+            },
+        ),
+        (
+            "subj_3.2.5_0.85_15_tf",
+            {
+                "traindata_id": 3,
+                "monitor_metric_accuracy": 0.85,
+                "epoch": 15,
+                "save_format": "tf",
+                "base_output_name": "subj_03.2.5-15",
+                "base_output_legacy_name": "subj_03.2.5_15",
+            },
+        ),
+        (
+            "subj_3.2.5_0.85_15_tf",
             {
                 "traindata_id": 3,
                 "monitor_metric_accuracy": 0.85,
@@ -101,7 +156,7 @@ def test_parse_model_filename(tmp_path, filename, expected_info):
         assert model_info is None
     else:
         for key, value in expected_info.items():
-            assert model_info[key] == value
+            assert getattr(model_info, key) == value
 
 
 @pytest.mark.parametrize(
@@ -211,8 +266,10 @@ def test_validate_augmentations_defaults(tmp_path):
         (
             {"zoom_range": 0.1},
             {"zoom_range": 0.2},
-            "['when zoom_range is used, it should be in image_augmentations and "
-            "mask_augmentations with the same value'",
+            (
+                "['when zoom_range is used, it should be in image_augmentations and "
+                "mask_augmentations with the same value'"
+            ),
         ),
         (
             {"zoom_range": 9},

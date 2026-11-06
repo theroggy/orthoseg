@@ -2,22 +2,162 @@
 
 import argparse
 import logging
+import math
 import pprint
+import re
 import sys
 import traceback
 from pathlib import Path
 from typing import Any
 
-# import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "-1" # Disable using GPU
+import rasterio as rio
+
 import orthoseg.model.model_factory as mf
 import orthoseg.model.model_helper as mh
 from orthoseg.helpers import config_helper as conf, email_helper
 from orthoseg.lib import cleanup, predicter
+from orthoseg.postprocess import _apply_postprocess
 from orthoseg.util import log_util
 
 # Get a logger...
 logger = logging.getLogger(__name__)
+
+
+def _validate_input_image_dir(
+    input_image_dir: Path,
+    image_pixel_x_size: float,
+    image_pixel_y_size: float,
+    use_cache: str,
+) -> Path:
+    """Validate the input image directory.
+
+    Returns the input image directory if it exists or a compatible sibling cache
+    directory if available. A missing cache is allowed when ``use_cache`` is
+    ``"ifavailable"`` or ``"no"``.
+
+    If the exactly configured image cache directory is not found, return a compatible
+    sibling cache directory if available. Check the first JPG in the first
+    subdirectory against the configured prediction pixel sizes.
+    """
+    if use_cache == "no":
+        return input_image_dir
+
+    if input_image_dir.exists():
+        return input_image_dir
+
+    if not input_image_dir.parent.is_dir():
+        if use_cache == "ifavailable":
+            return input_image_dir
+        raise ValueError(f"Input image directory does not exist: {input_image_dir}")
+
+    # Look for compatible sibling cache directories
+    cache_dir_pattern = re.compile(r"^\d+x\d+_\d+pxOverlap$")
+    matching_dirs = [
+        path
+        for path in input_image_dir.parent.iterdir()
+        if path.is_dir() and cache_dir_pattern.fullmatch(path.name)
+    ]
+    if not matching_dirs:
+        if use_cache == "ifavailable":
+            return input_image_dir
+        raise ValueError(f"Input image directory does not exist: {input_image_dir}")
+
+    incompatible_dirs = []
+    for candidate_dir in matching_dirs:
+        pixel_size_mismatch = _check_input_image_pixel_size(
+            candidate_dir,
+            image_pixel_x_size=image_pixel_x_size,
+            image_pixel_y_size=image_pixel_y_size,
+        )
+        if pixel_size_mismatch is None:
+            logger.warning(
+                f"Configured input_image_dir does not exist: {input_image_dir}. "
+                f"Using compatible cache directory: {candidate_dir}"
+            )
+            return candidate_dir
+
+        incompatible_dirs.append(f"{candidate_dir}: {pixel_size_mismatch}")
+
+    if use_cache == "ifavailable":
+        logger.warning(
+            f"No compatible cache directory found for {input_image_dir}; "
+            "fetching images directly"
+        )
+        return input_image_dir
+
+    raise ValueError(
+        f"Configured input_image_dir does not exist: {input_image_dir}. "
+        "No compatible cache directory found for predict pixel sizes "
+        f"x={image_pixel_x_size}, y={image_pixel_y_size}. "
+        f"Checked: {'; '.join(incompatible_dirs)}"
+    )
+
+
+def _check_input_image_pixel_size(
+    input_image_dir: Path, image_pixel_x_size: float, image_pixel_y_size: float
+) -> str | None:
+    """Checks whether the input directory has images with the specified pixel sizes.
+
+    Returns:
+        If there is a mismatch in pixel sizes, returns a string with a
+            message describing the mismatch, otherwise None.
+    """
+    first_subdirectory = next(
+        (path for path in input_image_dir.iterdir() if path.is_dir()),
+        None,
+    )
+    if first_subdirectory is None:
+        return "no subdirectory found"
+
+    first_jpg = next(first_subdirectory.rglob("*.jpg"), None)
+    if first_jpg is None:
+        return f"no JPG found in {first_subdirectory}"
+
+    try:
+        with rio.open(first_jpg) as image_ds:
+            cached_pixel_x_size = abs(image_ds.transform.a)
+            cached_pixel_y_size = abs(image_ds.transform.e)
+    except rio.errors.RasterioIOError as ex:
+        return f"could not read pixel sizes from {first_jpg}: {ex}"
+
+    mismatches = []
+    if not math.isclose(cached_pixel_x_size, image_pixel_x_size):
+        mismatches.append(f"x={cached_pixel_x_size} (configured {image_pixel_x_size})")
+    if not math.isclose(cached_pixel_y_size, image_pixel_y_size):
+        mismatches.append(f"y={cached_pixel_y_size} (configured {image_pixel_y_size})")
+    if mismatches:
+        return f"pixel sizes of {first_jpg} do not match: {', '.join(mismatches)}"
+
+    return None
+
+
+def _set_dtype_policy_for_predict(dtype_policy_raw: str | None):
+    """Resolve and apply dtype policy for prediction.
+
+    Args:
+        dtype_policy_raw: Raw config value from `predict.dtype_policy`.
+            - `None` or empty: set mixed_float16 on GPU with compute capability >= 7,
+              else keep the default (float32).
+            - "None" as string: don't set any policy, let Keras use the default
+              (float32).
+            - otherwise: apply the policy value explicitly.
+    """
+    dtype_policy = "" if dtype_policy_raw is None else dtype_policy_raw.strip()
+
+    # Unset policy should still be deterministic and not depend on previous runs.
+    if dtype_policy == "":
+        nb_gpu = mh.get_number_gpus()
+        compute_capability = mh.get_min_gpu_compute_capability() if nb_gpu > 0 else None
+        if compute_capability is not None and compute_capability[0] >= 7:
+            mf.set_dtype_policy("mixed_float16")
+
+            logger.info(
+                f"predict.dtype_policy is unset, {nb_gpu=}, {compute_capability=}, "
+                f"set to mixed_float16"
+            )
+    elif dtype_policy.lower() != "none":
+        mf.set_dtype_policy(dtype_policy)
+        logger.info(f"Set keras dtype policy for prediction: {dtype_policy}")
 
 
 def _predict_args(args) -> argparse.Namespace:
@@ -40,25 +180,36 @@ def _predict_args(args) -> argparse.Namespace:
         default=argparse.SUPPRESS,
         help="Show this help message and exit",
     )
-    optional.add_argument(
-        "config_overrules",
-        nargs="*",
-        help=(
-            "Supply any number of config overrules like this: <section>.<key>=<value>"
-        ),
+    help_message = (
+        "Supply any number of config overrules like this: <section>.<key>=<value>"
     )
+    optional.add_argument("config_overrules", nargs="*", help=help_message)
+    help_message = (
+        "Disable final postprocessing after prediction "
+        "(default: postprocessing is enabled)"
+    )
+    optional.add_argument("--no-postprocess", action="store_true", help=help_message)
 
     return parser.parse_args(args)
 
 
-def predict(config_path: Path, config_overrules: list[str] | None = None):
+def predict(
+    config_path: Path,
+    config_overrules: list[str] | None = None,
+    postprocess: bool = True,
+) -> Path:
     """Run a prediction for the config specified.
 
     Args:
-        config_path (Path): Path to the config file to use.
-        config_overrules (list[str], optional): list of config options that will
+        config_path: Path to the config file to use.
+        config_overrules: list of config options that will
             overrule other ways to supply configuration. They should be specified in the
             form of "<section>.<key>=<value>". Defaults to None.
+        postprocess: Whether to apply postprocessing to the output
+            file of the prediction. Defaults to True.
+
+    Returns:
+        The path to the output vector file (postprocessed if postprocess=True).
     """
     # Init
     # Load the config and save in a bunch of global variables zo it
@@ -83,7 +234,13 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
         if image_layer_config is None:
             raise ValueError(f"{image_layer=} is not configured in image_layers")
 
-        input_image_dir = conf.dirs.getpath("predict_image_input_dir")
+        use_cache = image_layer_config.get("use_cache", "yes")
+        input_image_dir = _validate_input_image_dir(
+            conf.dirs.getpath("predict_image_input_dir"),
+            image_pixel_x_size=conf.predict.getfloat("image_pixel_x_size"),
+            image_pixel_y_size=conf.predict.getfloat("image_pixel_y_size"),
+            use_cache=use_cache,
+        )
 
         # Create base filename of model to use
         # TODO: is force data version the most logical, or rather implement
@@ -114,16 +271,42 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
             logger.critical(message)
             raise RuntimeError(message)
         else:
-            model_weights_filepath = best_model["filepath"]
+            model_weights_filepath = best_model.filepath
             logger.info(f"Best model found: {model_weights_filepath}")
 
-        model_name = best_model["basefilename"]
+        model_name = best_model.basefilename
+
+        # Check if output already exists, and if so, skip prediction.
+        output_vector_dir = conf.dirs.getpath("output_vector_dir")
+        output_vector_stem = f"{best_model.base_output_name}_{image_layer}"
+        output_vector_path = output_vector_dir / f"{output_vector_stem}_predict.gpkg"
+        output_vector_postp_path = output_vector_dir / f"{output_vector_stem}.gpkg"
+
+        if output_vector_postp_path.exists():
+            message = (
+                f"Predict + postprocess output exists already for {model_name} on "
+                f"{image_layer}"
+            )
+            logger.info(message)
+            email_helper.sendmail(message)
+            return output_vector_postp_path
+
+        # Backward compat: old-style name had epoch before image_layer, so if such
+        # files exist, return as well.
+        output_legacy_path = (
+            output_vector_dir
+            / f"{best_model.base_output_legacy_name}_{image_layer}.gpkg"
+        )
+        if output_legacy_path.exists():
+            message = f"Predict output exists already for {model_name} on {image_layer}"
+            logger.info(message)
+            email_helper.sendmail(message)
+            return output_legacy_path
 
         # Load the hyperparams of the model
         # TODO: move the hyperparams filename formatting to get_models...
         hyperparams_path = (
-            best_model["filepath"].parent
-            / f"{best_model['basefilename']}_hyperparams.json"
+            best_model.filepath.parent / f"{best_model.basefilename}_hyperparams.json"
         )
         hyperparams = mh.HyperParams(path=hyperparams_path)
 
@@ -137,11 +320,10 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
             input_height=input_height_pred,
         )
 
+        _set_dtype_policy_for_predict(conf.predict.get("dtype_policy", None))
+
         # Prepare output subdir to be used for predictions
-        predict_out_subdir = best_model["basefilename"]
-        if trainparams_id > 0:
-            predict_out_subdir += f"_{trainparams_id}"
-        predict_out_subdir += f"_{best_model['epoch']}"
+        predict_out_subdir = best_model.base_output_name
 
         # Load model to predict with
         # --------------------------
@@ -158,39 +340,46 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
                 logger.info(
                     "Tensorrt is available, so try to create and use optimized model"
                 )
-                savedmodel_optim_dir = (
-                    best_model["filepath"].parent
-                    / f"{best_model['filepath'].stem}_optim"
+                savedmodel_dir = best_model.filepath.parent.parent / "savedmodel_cache"
+                model_stem = best_model.filepath.stem.replace(".", "_")
+                savedmodel_optim_path = (
+                    savedmodel_dir / f"{model_stem}_optim"
                 )
-                if not savedmodel_optim_dir.exists():
+                if not savedmodel_optim_path.exists():
                     # If base model not yet in savedmodel format
-                    savedmodel_dir = (
-                        best_model["filepath"].parent / best_model["filepath"].stem
-                    )
-                    if not savedmodel_dir.exists():
+                    savedmodel_dir.mkdir(parents=True, exist_ok=True)
+                    savedmodel_path = savedmodel_dir / model_stem
+                    if not savedmodel_path.exists():
                         logger.info(
                             f"SavedModel format not yet available, so load "
-                            f"model + weights from {best_model['filepath']}"
+                            f"model + weights from {best_model.filepath}"
                         )
-                        model = mf.load_model(best_model["filepath"], compile=False)
-                        logger.info(f"Now save again as savedmodel to {savedmodel_dir}")
-                        tf.saved_model.save(model, str(savedmodel_dir))
+                        model, preprocess_input = mf.load_model(
+                            best_model.filepath, compile_model=False
+                        )
+                        logger.info(
+                            f"Now save again as savedmodel to {savedmodel_path}"
+                        )
+
+                        model.export(str(savedmodel_path))
                         model = None
 
                     # Now optimize model
-                    logger.info(f"Optimize + save model to {savedmodel_optim_dir}")
+                    logger.info(f"Optimize + save model to {savedmodel_optim_path}")
                     converter = trt.TrtGraphConverterV2(
                         input_saved_model_dir=str(savedmodel_dir),
-                        is_dynamic_op=True,
+                        use_dynamic_shape=True,
                         precision_mode="FP16",
                     )
                     converter.convert()
-                    converter.save(savedmodel_optim_dir)
+                    converter.save(savedmodel_optim_path)
 
                 logger.info(
-                    f"Load optimized model + weights from {savedmodel_optim_dir}"
+                    f"Load optimized model + weights from {savedmodel_optim_path}"
                 )
-                model = tf.keras.models.load_model(str(savedmodel_optim_dir))
+                model, preprocess_input = mf.load_model(
+                    str(savedmodel_optim_path), compile_model=False
+                )
 
             except ImportError:
                 logger.info("Tensorrt is not available, so load unoptimized model")
@@ -204,7 +393,7 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
         # If model isn't loaded yet... load!
         if model is None:
             model, preprocess_input = mf.load_model(
-                best_model["filepath"], compile_model=False
+                best_model.filepath, compile_model=False
             )
 
         # Prepare the model for predicting
@@ -232,11 +421,11 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
 
         # Prepare params for the inline postprocessing of the prediction
         min_probability = conf.predict.getfloat("min_probability")
-        postprocess: dict[str, Any] = {}
+        postprocess_tiles_config: dict[str, Any] = {}
         simplify_algorithm = conf.predict.get("simplify_algorithm")
         if simplify_algorithm is not None and simplify_algorithm != (""):
-            postprocess["simplify"] = {}
-            simplify = postprocess["simplify"]
+            postprocess_tiles_config["simplify"] = {}
+            simplify = postprocess_tiles_config["simplify"]
 
             simplify["simplify_algorithm"] = simplify_algorithm
             simplify["simplify_tolerance"] = conf.predict.geteval("simplify_tolerance")
@@ -244,24 +433,28 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
             simplify["simplify_topological"] = conf.predict.getboolean_ext(
                 "simplify_topological"
             )
-        postprocess["filter_background_modal_size"] = conf.predict.getint(
+        postprocess_tiles_config["filter_background_modal_size"] = conf.predict.getint(
             "filter_background_modal_size"
         )
         query = conf.predict.get("reclassify_to_neighbour_query")
         if query is not None:
             query = query.replace("\n", " ")
-        postprocess["reclassify_to_neighbour_query"] = query
-        logger.info(f"Inline postprocessing:\n{pprint.pformat(postprocess)}")
+        postprocess_tiles_config["reclassify_to_neighbour_query"] = query
+        logger.info(
+            f"Inline postprocessing:\n{pprint.pformat(postprocess_tiles_config)}"
+        )
 
         # Prepare the output dirs/paths
-        predict_output_dir = Path(
-            f"{conf.dirs['predict_image_output_basedir']}_{predict_out_subdir}"
+        # If the raw value of predict_image_output_basedir is a reference to the image
+        # input dir, just use the input_image_dir as base
+        predict_image_output_basedir_raw = conf.dirs.get(
+            "predict_image_output_basedir", raw=True
         )
-        output_vector_dir = conf.dirs.getpath("output_vector_dir")
-        output_vector_name = (
-            f"{best_model['basefilename']}_{best_model['epoch']}_{image_layer}"
-        )
-        output_vector_path = output_vector_dir / f"{output_vector_name}.gpkg"
+        if predict_image_output_basedir_raw == "${predict_image_input_dir}":
+            base_output_str = input_image_dir.as_posix()
+        else:
+            base_output_str = conf.dirs["predict_image_output_basedir"]
+        predict_output_dir = Path(f"{base_output_str}_{predict_out_subdir}")
 
         # Start predict for entire dataset
         # --------------------------------
@@ -269,7 +462,6 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
         email_helper.sendmail(f"Start predict for {model_name} on {image_layer}")
 
         # Check if we should use an image cache
-        use_cache = image_layer_config.get("use_cache", "yes")
         if use_cache == "ifavailable":
             use_cache = (
                 "yes"
@@ -288,7 +480,7 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
                 output_vector_path=output_vector_path,
                 classes=hyperparams.architecture.classes,
                 min_probability=min_probability,
-                postprocess=postprocess,
+                postprocess_tiles_config=postprocess_tiles_config,
                 border_pixels_to_ignore=conf.predict.getint("image_pixels_overlap"),
                 projection_if_missing=image_layer_config["projection"],
                 input_mask_dir=None,
@@ -314,7 +506,7 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
                 output_vector_path=output_vector_path,
                 classes=hyperparams.architecture.classes,
                 min_probability=min_probability,
-                postprocess=postprocess,
+                postprocess_tiles_config=postprocess_tiles_config,
                 projection_if_missing=image_layer_config["projection"],
                 input_mask_dir=None,
                 batch_size=batch_size,
@@ -347,6 +539,21 @@ def predict(config_path: Path, config_overrules: list[str] | None = None):
             versions_to_retain=conf.cleanup.getint("prediction_versions_to_retain"),
             simulate=conf.cleanup.getboolean("simulate"),
         )
+
+        # Apply final postprocessing if requested
+        if postprocess:
+            logger.info("Applying final postprocessing to predictions")
+            _apply_postprocess(output_vector_path, output_vector_postp_path)
+            message = (
+                f"Completed final postprocessing for {model_name} on {image_layer}"
+            )
+            logger.info(message)
+            email_helper.sendmail(message)
+
+            return output_vector_postp_path
+        else:
+            return output_vector_path
+
     except Exception as ex:
         if model_name is None:
             model_name = config_path.name
@@ -367,7 +574,11 @@ def main():
         args = _predict_args(sys.argv[1:])
 
         # Run!
-        predict(config_path=Path(args.config), config_overrules=args.config_overrules)
+        predict(
+            config_path=Path(args.config),
+            config_overrules=args.config_overrules,
+            postprocess=not args.no_postprocess,
+        )
     except Exception as ex:
         logger.exception(f"Error: {ex}")
         raise

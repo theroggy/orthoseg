@@ -35,6 +35,7 @@ class LabelInfo:
         locations_path: Path,
         polygons_path: Path,
         image_layer: str,
+        *,
         pixel_x_size: float | None = None,
         pixel_y_size: float | None = None,
         locations_gdf: gpd.GeoDataFrame | None = None,
@@ -43,14 +44,14 @@ class LabelInfo:
         """Conctructor of LabelInfo.
 
         Args:
-            locations_path (Path): file path to the locations file.
-            polygons_path (Path): file path to the polygons file.
-            image_layer (str): image layer for the label.
-            pixel_x_size (Optional[float], optional): _description_. Defaults to None.
-            pixel_y_size (Optional[float], optional): _description_. Defaults to None.
-            locations_gdf (Optional[gpd.GeoDataFrame], optional): _description_.
+            locations_path: file path to the locations file.
+            polygons_path: file path to the polygons file.
+            image_layer: image layer for the label.
+            pixel_x_size: _description_. Defaults to None.
+            pixel_y_size: _description_. Defaults to None.
+            locations_gdf: _description_.
                 Defaults to None.
-            polygons_gdf (Optional[gpd.GeoDataFrame], optional): _description_.
+            polygons_gdf: _description_.
                 Defaults to None.
         """
         self.locations_path = locations_path
@@ -65,7 +66,7 @@ class LabelInfo:
         """Return the object information as readable string.
 
         Returns:
-            str: readable string representation of object.
+            Readable string representation of object.
         """
         repr_str = (
             f"LabelInfo(image_layer={self.image_layer}, locations_path="
@@ -111,7 +112,7 @@ class ValidationError(ValueError):
         """Formats validation errors to string.
 
         Returns:
-            str: returns the validation errors as string.
+            Returns the validation errors as string.
         """
         repr_str = super().__str__()
         if self.errors is not None and len(self.errors) > 0:
@@ -124,7 +125,7 @@ class ValidationError(ValueError):
         """Formats validation errors to html.
 
         Returns:
-            str: the validation errors as html.
+            The validation errors as html.
         """
         repr_str = super().__str__()
         if self.errors is not None and len(self.errors) > 0:
@@ -138,6 +139,7 @@ def prepare_traindatasets(
     classes: dict,
     image_layers: dict,
     training_dir: Path,
+    *,
     labelname_column: str = "classname",
     image_pixel_x_size: float = 0.25,
     image_pixel_y_size: float = 0.25,
@@ -159,32 +161,32 @@ def prepare_traindatasets(
         dataversion: a version number for the dataset created/found
 
     Args:
-        label_infos (list[LabelInfo]): paths to the files with label polygons
+        label_infos: paths to the files with label polygons
             and locations to generate images for.
-        classes (dict): dict with the classes to detect as keys. The values
+        classes: dict with the classes to detect as keys. The values
             are the following:
                 - labelnames: list of labels to use for this class
                 - weight:
                 - burn_value:
-        image_layers (dict): the image layers available with their properties.
-        training_dir (Path): the directory to save the training data to.
-        labelname_column (str): the column where the label names are stored in
+        image_layers: the image layers available with their properties.
+        training_dir: the directory to save the training data to.
+        labelname_column: the column where the label names are stored in
             the polygon files. If the column name specified is not found, column
             "label_name" is used if it exists for backwards compatibility.
-        image_pixel_x_size (float): pixel size in x direction. Defaults to 0.25.
-        image_pixel_y_size (float): pixel size in y direction. Defaults to 0.25.
-        image_pixel_width (int): width of the image in pixels. Defaults to 512.
-        image_pixel_height (int): height of the image in pixels. Defaults to 512.
-        ssl_verify (bool or str, optional): True to use the default
+        image_pixel_x_size: pixel size in x direction. Defaults to 0.25.
+        image_pixel_y_size: pixel size in y direction. Defaults to 0.25.
+        image_pixel_width: width of the image in pixels. Defaults to 512.
+        image_pixel_height: height of the image in pixels. Defaults to 512.
+        ssl_verify: True to use the default
             certificate bundle as installed on your system. False disables
             certificate validation (NOT recommended!). If a path to a
             certificate bundle file (.pem) is passed, this will be used.
             In corporate networks using a proxy server this is often needed
             to avoid CERTIFICATE_VERIFY_FAILED errors. Defaults to True.
-        only_validate (bool, optional): True to only validate the input label data.
-        force (bool, opitional): True to force recreation of output files.
+        only_validate: True to only validate the input label data.
+        force: True to force recreation of output files.
             Defaults to False.
-        nb_concurrent_calls (int, optional): Number of concurrent worker threads used
+        nb_concurrent_calls: Number of concurrent worker threads used
             to prepare images/masks per traindata type. A conservative upper bound is
             enforced to avoid overwhelming remote image services. Defaults to 4.
     """
@@ -400,6 +402,7 @@ def prepare_traindatasets(
 def prepare_labeldata(
     label_infos: list[LabelInfo],
     classes: dict,
+    *,
     labelname_column: str,
     image_pixel_x_size: float | None,
     image_pixel_y_size: float | None,
@@ -411,22 +414,22 @@ def prepare_labeldata(
     The GeoDataFrames returned can be used to fetch train images and burn masks.
 
     Args:
-        label_infos (list[LabelInfo]): the label files/data.
-        classes (dict): dict with classes and their corresponding
+        label_infos: the label files/data.
+        classes: dict with classes and their corresponding
             label class names + weights.
-        labelname_column (str): the column name in the label polygon files where the
+        labelname_column: the column name in the label polygon files where the
             label classname can be found. Defaults to "classname".
-        image_pixel_x_size (float): pixel size in x direction.
-        image_pixel_y_size (float): pixel size in y direction.
-        image_pixel_width (int): width of the image in pixels.
-        image_pixel_height (int): height of the image in pixels.
+        image_pixel_x_size: pixel size in x direction.
+        image_pixel_y_size: pixel size in y direction.
+        image_pixel_width: width of the image in pixels.
+        image_pixel_height: height of the image in pixels.
 
     Raises:
         ValidationError: if the data is somehow not valid. All issues are listed in the
             errors property.
 
     Returns:
-        list[tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]]: returns a list of tuples with
+        returns a list of tuples with
             geodataframes with labellocations and labelpolygons to burn.
     """
     labeldata_result = []
@@ -438,16 +441,29 @@ def prepare_labeldata(
         # Read label locations if needed
         if label_info.locations_gdf is not None:
             labellocations_gdf = label_info.locations_gdf
+            if "traindata_type" not in labellocations_gdf.columns:
+                validation_errors.append(
+                    "Mandatory column traindata_type not found in "
+                    f"{label_info.locations_path}"
+                )
         else:
             logger.debug(f"Read label locations from {label_info.locations_path}")
-            labellocations_gdf = gfo.read_file(label_info.locations_path)
-            labellocations_gdf["path"] = str(label_info.locations_path)
-            labellocations_gdf["image_layer"] = label_info.image_layer
-            # Remark: geopandas 0.7.0 drops fid column internally!
-            labellocations_gdf["row_nb_orig"] = labellocations_gdf.index
-            if len(labellocations_gdf) == 0:
-                logger.warning(
-                    f"No label locations found in {label_info.locations_path}"
+            try:
+                labellocations_gdf = gfo.read_file(
+                    label_info.locations_path, columns=["traindata_type"]
+                )
+                labellocations_gdf["path"] = str(label_info.locations_path)
+                labellocations_gdf["image_layer"] = label_info.image_layer
+                # Remark: geopandas 0.7.0 drops fid column internally!
+                labellocations_gdf["row_nb_orig"] = labellocations_gdf.index
+                if len(labellocations_gdf) == 0:
+                    logger.warning(
+                        f"No label locations found in {label_info.locations_path}"
+                    )
+                    continue
+            except Exception as ex:
+                validation_errors.append(
+                    f"Failed to read locations from {label_info.locations_path}: {ex}"
                 )
                 continue
 
@@ -456,11 +472,24 @@ def prepare_labeldata(
             labelpolygons_gdf = label_info.polygons_gdf
         else:
             logger.debug(f"Read label data from {label_info.polygons_path}")
-            labelpolygons_gdf = gfo.read_file(label_info.polygons_path)
-            labelpolygons_gdf["path"] = str(label_info.polygons_path)
-            labelpolygons_gdf["image_layer"] = label_info.image_layer
-            if len(labelpolygons_gdf) == 0:
-                logger.warning(f"No label polygons found in {label_info.polygons_path}")
+
+            # For backwards compatibility, use "label_name" if needed
+            poly_info = gfo.get_layerinfo(label_info.polygons_path)
+            if labelname_column in poly_info.columns:
+                labelname_column_cur = labelname_column
+            else:
+                labelname_column_cur = "label_name"
+            try:
+                labelpolygons_gdf = gfo.read_file(
+                    label_info.polygons_path, columns=[labelname_column_cur]
+                )
+                labelpolygons_gdf["path"] = str(label_info.polygons_path)
+                labelpolygons_gdf["image_layer"] = label_info.image_layer
+            except Exception as ex:
+                validation_errors.append(
+                    f"Failed to read polygons from {label_info.polygons_path}: {ex}"
+                )
+                continue
 
         assert labellocations_gdf is not None
         assert labelpolygons_gdf is not None
@@ -471,12 +500,6 @@ def prepare_labeldata(
 
         # Validate + process the location data
         # ------------------------------------
-        if "traindata_type" not in labellocations_gdf.columns:
-            validation_errors.append(
-                "Mandatory column traindata_type not found in "
-                f"{label_info.locations_path}"
-            )
-
         # Check + correct the geom of the location to make sure it matches the size of
         # the training images/masks to be generated...
         # Prepare pixel size: if defined on label info level, use that.
@@ -609,10 +632,9 @@ def prepare_labeldata(
                 labelnames = []
                 for classvalue in classes.values():
                     labelnames.extend(classvalue["labelnames"])
+                geometry = invalid_row[labels_to_burn_gdf.geometry.name]
                 point = (
-                    invalid_row.geometry.representative_point()
-                    if invalid_row.geometry is not None
-                    else None
+                    geometry.representative_point() if not pd.isna(geometry) else None
                 )
                 validation_errors.append(
                     f"Invalid class/label name at {point} "
@@ -700,16 +722,16 @@ def create_tmp_dir(
     directory for a while.
 
     Args:
-        parent_dir (Path): The dir to create the temp dir in.
-        dir_name (str): The name of the dir to base the temp dir on.
-        remove_existing (bool, optional): If True, existing TMP directories
+        parent_dir: The dir to create the temp dir in.
+        dir_name: The name of the dir to base the temp dir on.
+        remove_existing: If True, existing TMP directories
             will be removed if possible. Defaults to False.
 
     Raises:
         Exception: [description]
 
     Returns:
-        Path: [description]
+        [description]
     """
     # The final dir should not exists yet!
     final_dir = parent_dir / dir_name
@@ -760,6 +782,7 @@ def _prepare_image_and_mask(
     image_layer: str,
     image_crs: Any,
     labels_to_burn_gdf: gpd.GeoDataFrame,
+    *,
     image_layers: dict,
     output_imagedata_image_dir: Path,
     output_imagedata_mask_dir: Path,
@@ -785,14 +808,14 @@ def _prepare_image_and_mask(
         and (previous_imagedata_image_dir / output_filename).exists()
     ):
         image_filepath: Path | None = Path(
-            shutil.copy(
+            shutil.copyfile(
                 src=previous_imagedata_image_dir / output_filename,
                 dst=output_imagedata_image_dir / output_filename,
             )
         )
         pgw_filename = output_filename.replace(".png", ".pgw")
         if (previous_imagedata_image_dir / pgw_filename).exists():
-            shutil.copy(
+            shutil.copyfile(
                 src=previous_imagedata_image_dir / pgw_filename,
                 dst=output_imagedata_image_dir / pgw_filename,
             )

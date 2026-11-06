@@ -68,7 +68,7 @@ def pformat_config() -> str:
     """Format the config to a string.
 
     Returns:
-        str: the configuration as string
+        the configuration as string
     """
     message = f"Config files used: {pprint.pformat(config_filepaths_used)} \n"
     message += f"Layer config file used: {layer_config_filepath_used} \n"
@@ -83,8 +83,8 @@ def read_orthoseg_config(config_path: Path, overrules: list[str] | None = None):
     """Read an orthoseg configuration file.
 
     Args:
-        config_path (Path): path to the configuration file to read.
-        overrules (list[str], optional): list of config options that will overrule other
+        config_path: path to the configuration file to read.
+        overrules: list of config options that will overrule other
             ways to supply configuration. They should be specified as a list of
             "<section>.<key>=<value>" strings. Defaults to None.
     """
@@ -212,6 +212,18 @@ def read_orthoseg_config(config_path: Path, overrules: list[str] | None = None):
                 f"doesn't exist: {output_style_path}"
             )
 
+    clip_path = postprocess.getpath("clip_path")
+    if clip_path is not None and not clip_path.is_absolute():
+        clip_path_absolute = (config_path.parent / clip_path).resolve()
+        postprocess["clip_path"] = clip_path_absolute.as_posix()
+        clip_path = clip_path_absolute
+
+    if clip_path is not None and not clip_path.exists():
+        raise FileNotFoundError(
+            "postprocess.clip_path is configured explicitly, but file doesn't exist: "
+            f"{clip_path}"
+        )
+
     # Some version-specific defaults
     if train.get("save_format") is None:
         train["save_format"] = "keras" if KERAS_GTE_3 else "h5"
@@ -282,7 +294,7 @@ def get_run_tmp_dir() -> Path:
     If no temporary directory exists yet, it is created.
 
     Returns:
-        Path: the path to the temporary directory.
+        the path to the temporary directory.
     """
     global _run_tmp_dir
 
@@ -307,7 +319,7 @@ def get_train_label_infos() -> list[LabelInfo]:
     """Searches and returns LabelInfos that can be used to create a training dataset.
 
     Returns:
-        list[LabelInfo]: List of LabelInfos found.
+        List of LabelInfos found.
     """
     train_label_infos = _prepare_train_label_infos(
         labelpolygons_pattern=train.getpath("labelpolygons_pattern"),
@@ -716,7 +728,7 @@ def _gdal_virtual_file_path(layersource) -> Path:
         layersource (dict): the layersource information.
 
     Returns:
-        Path: the path to the virtual file.
+        the path to the virtual file.
     """
     output_path = get_run_tmp_dir() / f"{layersource['layername']}.vrt"
     input_url = (

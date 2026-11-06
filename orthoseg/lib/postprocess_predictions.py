@@ -27,6 +27,25 @@ logging.getLogger("shapely.geos").setLevel(logging.WARNING)
 # Get a logger...
 logger = logging.getLogger(__name__)
 
+
+def _prediction_to_uint8(image_pred_arr: np.ndarray) -> np.ndarray:
+    """Convert a prediction array to uint8 in range [0, 255].
+
+    Floating point arrays are interpreted as probabilities in [0, 1].
+    """
+    if np.issubdtype(image_pred_arr.dtype, np.floating):
+        # Mixed precision inference can return float16 outputs. Clip to a valid
+        # probability range before scaling to avoid wrap-around/overflow effects.
+        image_pred_clipped = np.clip(image_pred_arr, 0.0, 1.0)
+        return np.array(image_pred_clipped * 255, dtype=np.uint8)
+    if image_pred_arr.dtype == np.uint8:
+        return np.array(image_pred_arr, copy=True)
+
+    raise Exception(
+        f"image prediction is in an unsupported type: {image_pred_arr.dtype}"
+    )
+
+
 # -------------------------------------------------------------
 # Postprocess to use on all vector outputs
 # -------------------------------------------------------------
@@ -35,6 +54,8 @@ logger = logging.getLogger(__name__)
 def postprocess_predictions(
     input_path: Path,
     output_path: Path,
+    *,
+    clip_path: Path | None = None,
     dissolve: bool,
     dissolve_tiles_path: Path | None = None,
     reclassify_to_neighbour_query: str | None = None,
@@ -46,55 +67,87 @@ def postprocess_predictions(
     keep_intermediary_files: bool = True,
     nb_parallel: int = -1,
     force: bool = False,
-) -> list[Path]:
+) -> dict[str, Path]:
     """Postprocesses the input prediction as specified.
 
     Args:
         input_path: path to the 'raw' prediction vector file.
         output_path: the base path where the output file(s) will be written to.
-        keep_original_file: If True, the output file of the prediction step
-            will be retained ofter postprocessing, otherwise it is removed.
-        keep_intermediary_files: If True, intermediary postprocessing files are removed.
-        dissolve (bool): True if a dissolve needs to be applied
-        dissolve_tiles_path (PathLike, optional): Path to a geofile containing
+        clip_path: Path to a vector file used to clip the input
+            before other postprocess steps. If None, no clipping is applied.
+        dissolve: True if a dissolve needs to be applied
+        dissolve_tiles_path: Path to a geofile containing
             the tiles to be used for the dissolve. Defaults to None.
-        reclassify_to_neighbour_query (str, optional): Defaults to None.
-        simplify_algorithm (str, optional): Algorithm to use for simplification. If
+        reclassify_to_neighbour_query: Defaults to None.
+        simplify_algorithm: Algorithm to use for simplification. If
             None, no simplification is applied. Defaults to None.
-        simplify_tolerance (float): Tolerance to use for the simplification.
+        simplify_tolerance: Tolerance to use for the simplification.
             Defaults to 1.
-        simplify_lookahead (int): Lookahead to use for simplification. Default to 8.
-        output_style_path (Path, optional): Path to a QGIS .qml style file. If
+        simplify_lookahead: Lookahead to use for simplification. Default to 8.
+        output_style_path: Path to a QGIS .qml style file. If
             specified and output is a GeoPackage, the style is added to the layer.
-        nb_parallel (int, optional): number of cpu's to use for postprocessing.
+        keep_original_file: If True, the input file  will be retained after
+            postprocessing, otherwise it is removed.
+        keep_intermediary_files: If True, intermediary postprocessing files are
+            retained.
+        nb_parallel: number of cpu's to use for postprocessing.
             Use all cpu's if it is -1. Defaults to -1.
-        force: False to skip results that already exist, true to
+        force: False to skip results that already exist, True to
                ignore existing results and overwrite them
+
+    Returns:
+        Dictionary with the paths of the created intermediary files.
+            The keys are the postprocessing steps that were applied. E.g. "clip",
+            "dissolve", "reclass", "simplify". The values are the paths to the created
+            files. If no postprocessing was applied or if `keep_intermediary_files` is
+            False, the returned dictionary is empty.
     """
     # Init
     if not input_path.exists():
-        raise Exception(f"input_path does not exist: {input_path}")
+        raise FileNotFoundError(f"input_path does not exist: {input_path}")
+    if input_path == output_path:
+        raise ValueError(f"input_path and output_path are the same: {input_path}")
+
+    if output_path.exists() and not force:
+        return {}
 
     # The return value is the list of paths created
-    output_paths = []
+    output_paths = {}
 
     # Because the geo operations will be applied sequentially if applicable,
     # both the input path and output path will build on the result of the
     # previous operation.
     # Set the initial values to the ones passed in as parameters.
     curr_input_path = input_path
-    curr_output_path = output_path
+    curr_output_path = input_path
+
+    # Clip the predictions if needed.
+    if clip_path is not None:
+        curr_output_path = (
+            output_path.parent / f"{curr_output_path.stem}_clip{output_path.suffix}"
+        )
+
+        gfo.clip(
+            input_path=curr_input_path,
+            clip_path=clip_path,
+            output_path=curr_output_path,
+            nb_parallel=nb_parallel,
+            force=force,
+        )
+
+        curr_input_path = curr_output_path
+        output_paths["clip"] = curr_output_path
 
     # Dissolve the predictions if needed
     if dissolve:
         curr_output_path = (
-            output_path.parent / f"{output_path.stem}_dissolve{output_path.suffix}"
+            output_path.parent / f"{curr_output_path.stem}_dissolve{output_path.suffix}"
         )
 
         # If the dissolved file doesn't exist yet, go for it...
         if not curr_output_path.exists():
             # If column classname present, group on it...
-            layerinfo = gfo.get_layerinfo(input_path)
+            layerinfo = gfo.get_layerinfo(curr_input_path)
             if "classname" in layerinfo.columns:
                 groupby_columns = ["classname"]
             else:
@@ -102,7 +155,7 @@ def postprocess_predictions(
 
             # Now we can dissolve
             gfo.dissolve(
-                input_path=input_path,
+                input_path=curr_input_path,
                 tiles_path=dissolve_tiles_path,
                 output_path=curr_output_path,
                 groupby_columns=groupby_columns,
@@ -123,11 +176,11 @@ def postprocess_predictions(
 
         # The curr_output_path becomes the new current input path
         curr_input_path = curr_output_path
-        output_paths.append(curr_output_path)
+        output_paths["dissolve"] = curr_output_path
 
     if reclassify_to_neighbour_query is not None:
         curr_output_path = (
-            output_path.parent / f"{output_path.stem}_reclass{output_path.suffix}"
+            output_path.parent / f"{curr_output_path.stem}_reclass{output_path.suffix}"
         )
         vectorfile_helper.reclassify_neighbours(
             input_path=curr_input_path,
@@ -136,7 +189,7 @@ def postprocess_predictions(
             output_path=curr_output_path,
         )
         curr_input_path = curr_output_path
-        output_paths.append(curr_output_path)
+        output_paths["reclass"] = curr_output_path
 
     # If a simplify algorithm is specified, simplify!
     if simplify_algorithm is not None:
@@ -169,27 +222,38 @@ def postprocess_predictions(
             )
 
         curr_input_path = curr_output_path
-        output_paths.append(curr_output_path)
+        output_paths["simplify"] = curr_output_path
 
-    # If postprocessing steps are defined, the output of the prediction step
-    # (input_path) is renamed to ..._orig.gpkg
-    if dissolve or reclassify_to_neighbour_query or simplify_algorithm:
-        original_file = input_path.parent / f"{input_path.stem}_orig.gpkg"
-        if original_file.exists():
-            gfo.remove(original_file)
-        input_path.rename(original_file)
-        shutil.copy(src=curr_output_path, dst=input_path)
+    # Move/copy files to final locations + cleanup
+    if clip_path or dissolve or reclassify_to_neighbour_query or simplify_algorithm:
+        gfo.copy(curr_output_path, output_path)
+        if output_path.suffix.lower() == ".gpkg":
+            gfo.rename_layer(output_path, gfo.get_default_layer(output_path))
 
-    _add_output_layer_style(output_path=input_path, output_style_path=output_style_path)
+        # Cleanup original file
+        if not keep_original_file:
+            gfo.remove(input_path, missing_ok=True)
 
-    # Cleanup original file
-    if not keep_original_file:
-        original_file.unlink()
+        # Cleanup intermediary files
+        if not keep_intermediary_files:
+            for postprocess_step, path in list(output_paths.items()):
+                gfo.remove(path, missing_ok=True)
+                del output_paths[postprocess_step]
 
-    # Cleanup intermediary files
-    if not keep_intermediary_files:
-        for file in output_paths:
-            file.unlink()
+    else:
+        # If no postprocessing steps are defined, the output of the prediction step
+        # (input_path) is renamed to the output_path
+        if input_path != output_path:
+            if keep_original_file:
+                gfo.copy(input_path, output_path)
+            else:
+                gfo.move(input_path, output_path)
+            if output_path.suffix.lower() == ".gpkg":
+                gfo.rename_layer(output_path, gfo.get_default_layer(output_path))
+
+    _add_output_layer_style(
+        output_path=output_path, output_style_path=output_style_path
+    )
 
     return output_paths
 
@@ -226,10 +290,10 @@ def read_prediction_file(filepath: Path) -> gpd.GeoDataFrame | None:
     """Read the prediction file specified.
 
     Args:
-        filepath (Path): path to the prediction file.
+        filepath: path to the prediction file.
 
     Returns:
-        Optional[gpd.GeoDataFrame]: the vectorized and cleaned prediction.
+        the vectorized and cleaned prediction.
     """
     ext_lower = filepath.suffix.lower()
     if ext_lower == ".geojson":
@@ -245,6 +309,7 @@ def postprocess_prediction_to_file(
     image_crs: str,
     image_transform,
     classes: list,
+    *,
     output_vector_path: Path | None = None,
     output_image_dir: Path | None = None,
     input_image_filepath: Path | None = None,
@@ -253,48 +318,48 @@ def postprocess_prediction_to_file(
     input_mask_dir: Path | None = None,
     min_probability: float = 0.5,
     border_pixels_to_ignore: int = 0,
-    postprocess: dict | None = None,
+    postprocess_tiles_config: dict | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
     """Postprocess a prediction to file(s).
 
     Args:
-        image_pred_arr (np.ndarray): The prediction as returned by keras.
-        image_crs (str): Crs of the prediction image.
+        image_pred_arr: The prediction as returned by keras.
+        image_crs: Crs of the prediction image.
         image_transform (_type_): transform of the prediction image.
-        classes (list): _description_
-        output_vector_path (Path | None, optional): The path to write the polygonized
+        classes: _description_
+        output_vector_path: The path to write the polygonized
             prediction to. If None, no polygonized result is written. Defaults to None.
-        output_image_dir (Path | None, optional): The directory to write the prediction
+        output_image_dir: The directory to write the prediction
             to as an image. If None, no image of the prediction is written.
             Defaults to None.
-        input_image_filepath (Path | None, optional): The path to the image that was
+        input_image_filepath: The path to the image that was
             predicted image. Is mandatory if output_image_dir is not None.
             Defaults to None.
-        evaluate_mode (bool, optional): True to write additional images to
+        evaluate_mode: True to write additional images to
             `output_image_dir` that can help to evaluate the prediction quality. E.g.
             the original image the the image mask (if available). Defaults to False.
-        input_image_dir (Path | None, optional): Only relevant if `evaluate_mode=True`.
+        input_image_dir: Only relevant if `evaluate_mode=True`.
             The base directory where the input images for the prediction can be found.
             Defaults to None.
-        input_mask_dir (Path | None, optional): Only relevant if `evaluate_mode=True`.
+        input_mask_dir: Only relevant if `evaluate_mode=True`.
             The base directory where mask images for the input images can be found.
             Defaults to None.
-        min_probability (float): Minimum probability to consider a pixel being of a
+        min_probability: Minimum probability to consider a pixel being of a
             certain class. Defaults to 0.5.
-        border_pixels_to_ignore (int, optional): number of pixels at all borders that
+        border_pixels_to_ignore: number of pixels at all borders that
             should be ignored. Defaults to 0.
-        postprocess (dict | None, optional): specifies which postprocessing should be
-            applied to the prediction for the vector output.
-            Default is None: no postprocessing.
-        force (bool, optional): True to force calculation even if output file(s) exist.
+        postprocess_tiles_config: specifies which postprocessing
+            should be applied to each predicted tile.
+            Default is None, so no postprocessing.
+        force: True to force calculation even if output file(s) exist.
             Defaults to False.
 
     Raises:
         ValueError: invalid input parameters specified.
 
     Returns:
-        dict[str, Any]: Returns debugging information.
+        Returns debugging information.
     """
     result: dict[str, Any] = {}
 
@@ -308,7 +373,7 @@ def postprocess_prediction_to_file(
                 classes=classes,
                 output_vector_path=output_vector_path,
                 min_probability=min_probability,
-                postprocess=postprocess,
+                postprocess_tiles_config=postprocess_tiles_config,
                 border_pixels_to_ignore=border_pixels_to_ignore,
                 force=force,
             )
@@ -343,11 +408,11 @@ def to_binary_uint8(in_arr: np.ndarray, thresshold_ok: int = 128) -> np.ndarray:
     """Convert input array to binary UINT8.
 
     Args:
-        in_arr (np.ndarray): input array
-        thresshold_ok (int, optional): thresshold to use. Defaults to 128.
+        in_arr: input array
+        thresshold_ok: thresshold to use. Defaults to 128.
 
     Returns:
-        np.ndarray: result
+        result
     """
     # Check input parameters
     if in_arr.dtype != np.uint8:
@@ -366,6 +431,7 @@ def postprocess_for_evaluation(
     image_crs: str,
     image_transform,
     image_pred_filepath: Path,
+    *,
     image_pred_uint8_cleaned_bin: np.ndarray,
     class_id: int,
     class_name: str,
@@ -392,22 +458,22 @@ def postprocess_for_evaluation(
         - if no mask is available, the % of pixels that is white
 
     Args:
-        image_filepath (Path): _description_
-        image_crs (str): _description_
+        image_filepath: _description_
+        image_crs: _description_
         image_transform (_type_): _description_
-        image_pred_filepath (Path): _description_
-        image_pred_uint8_cleaned_bin (np.ndarray): _description_
-        class_id (int): _description_
-        class_name (str): _description_
-        nb_classes (int): _description_
-        output_dir (Path): _description_
-        output_suffix (Optional[str], optional): _description_. Defaults to None.
-        input_image_dir (Optional[Path], optional): _description_. Defaults to None.
-        input_mask_dir (Optional[Path], optional): _description_. Defaults to None.
-        max_similarity_to_save (float | None, optional): Maximum similarity
+        image_pred_filepath: _description_
+        image_pred_uint8_cleaned_bin: _description_
+        class_id: _description_
+        class_name: _description_
+        nb_classes: _description_
+        output_dir: _description_
+        output_suffix: _description_. Defaults to None.
+        input_image_dir: _description_. Defaults to None.
+        input_mask_dir: _description_. Defaults to None.
+        max_similarity_to_save: Maximum similarity
             for which evaluation outputs should be saved. If the measured
             similarity is higher, evaluation outputs are skipped. Defaults to 0.999.
-        border_pixels_to_ignore (int, optional): number of pixels at all borders that
+        border_pixels_to_ignore: number of pixels at all borders that
             should be ignored. Defaults to 0.
 
     Raises:
@@ -598,9 +664,9 @@ def polygonize_pred_for_evaluation(
 
     Args:
         image_pred_uint8_bin (_type_): _description_
-        image_crs (str): _description_
+        image_crs: _description_
         image_transform (_type_): _description_
-        output_basefilepath (Path): _description_
+        output_basefilepath: _description_
     """
     # Polygonize result
     try:
@@ -701,12 +767,12 @@ def polygonize_pred_from_file(
     """Polygonize a prediction from a file.
 
     Args:
-        image_pred_filepath (Path): path to the file to be read.
-        save_to_file (bool, optional): If True, save te result to a file.
+        image_pred_filepath: path to the file to be read.
+        save_to_file: If True, save te result to a file.
             Defaults to False.
 
     Returns:
-        Optional[gpd.GeoDataFrame]: _description_
+        _description_
     """
     try:
         with rio.open(image_pred_filepath) as image_ds:
@@ -751,33 +817,37 @@ def polygonize_pred_multiclass_to_file(
     image_transform,
     classes: list,
     output_vector_path: Path,
+    *,
     min_probability: float = 0.5,
-    postprocess: dict | None = None,
+    postprocess_tiles_config: dict | None = None,
     border_pixels_to_ignore: int = 0,
     force: bool = False,
 ) -> dict:
     """Polygonize a multiclass prediction to a file.
 
     Args:
-        image_pred_arr (np.ndarray): The prediction as returned by keras.
-        image_crs (str): Crs of the prediction image.
+        image_pred_arr: The prediction as returned by keras.
+        image_crs: Crs of the prediction image.
         image_transform (_type_): transform of the prediction image.
-        classes (list): _description_
-        output_vector_path (Path): _description_
-        min_probability (float): Minimum probability to consider a pixel being of a
+        classes: List of class names.
+        output_vector_path: Path to the output vector file.
+        min_probability: Minimum probability to consider a pixel being of a
             certain class. Defaults to 0.5.
-        postprocess (dict | None, optional): specifies which postprocessing should be
-            applied to the prediction. Default is None, so no postprocessing.
-        border_pixels_to_ignore (int, optional): number of pixels at all borders that
+        postprocess_tiles_config: specifies which postprocessing
+            should be applied to each predicted tile.
+            Default is None, so no postprocessing.
+        border_pixels_to_ignore: number of pixels at all borders that
             should be ignored. Defaults to 0.
-        force (bool, optional): _description_. Defaults to False.
+        force: Whether to overwrite the output file if it exists.
+            Defaults to False.
 
     Returns:
-        dict: _description_
+        Dictionary containing the number of features written and the columns of
+              the resulting GeoDataFrame.
     """
     if output_vector_path.exists():
         if not force:
-            return {"nb_features_witten": None}
+            return {"nb_features_written": None}
 
         gfo.remove(output_vector_path)
 
@@ -788,7 +858,7 @@ def polygonize_pred_multiclass_to_file(
         image_transform=image_transform,
         classes=classes,
         min_probability=min_probability,
-        postprocess=postprocess,
+        postprocess_tiles_config=postprocess_tiles_config,
         border_pixels_to_ignore=border_pixels_to_ignore,
     )
 
@@ -802,9 +872,9 @@ def polygonize_pred_multiclass_to_file(
             force_multitype=True,
             create_spatial_index=False,
         )
-        return {"nb_features_witten": len(result_gdf), "columns": result_gdf.columns}
+        return {"nb_features_written": len(result_gdf), "columns": result_gdf.columns}
     else:
-        return {"nb_features_witten": None}
+        return {"nb_features_written": None}
 
 
 def polygonize_pred_multiclass(
@@ -812,26 +882,29 @@ def polygonize_pred_multiclass(
     image_crs: str,
     image_transform,
     classes: list,
+    *,
     min_probability: float = 0.5,
-    postprocess: dict | None = None,
+    postprocess_tiles_config: dict | None = None,
     border_pixels_to_ignore: int = 0,
 ) -> gpd.GeoDataFrame | None:
     """Polygonize a multiclass prediction.
 
     Args:
-        image_pred_arr (np.ndarray): _description_
-        image_crs (str): _description_
+        image_pred_arr: _description_
+        image_crs: _description_
         image_transform (_type_): _description_
-        classes (list): _description_
-        min_probability (float): Minimum probability to consider a pixel being of a
+        classes: _description_
+        min_probability: Minimum probability to consider a pixel being of a
             certain class. Defaults to 0.5.
-        postprocess (dict | None, optional): specifies which postprocessing should be
-            applied to the prediction. Default is None, so no postprocessing.
-        border_pixels_to_ignore (int, optional): number of pixels at all borders that
+        postprocess_tiles_config: specifies which postprocessing
+            should be applied to each predicted tile.
+            Default is None, so no postprocessing.
+        border_pixels_to_ignore: number of pixels at all borders that
             should be ignored. Defaults to 0.
 
     Returns:
-        Optional[gpd.GeoDataFrame]: _description_
+        The resulting GeoDataFrame if any polygons were
+            created, otherwise None.
     """
     # Init
     """
@@ -843,11 +916,9 @@ def polygonize_pred_multiclass(
                 image_pred_arr=image_pred_curr_arr,
                 border_pixels_to_ignore=border_pixels_to_ignore)
     """
-    # Convert prediction to uint8 if needed
-    if image_pred_arr.dtype == np.float32:
-        image_pred_uint8 = np.array((image_pred_arr * 255), dtype=np.uint8)
-    else:
-        image_pred_uint8 = image_pred_arr
+    # Convert prediction to uint8 if needed.
+    # Mixed precision inference can yield float16 arrays.
+    image_pred_uint8 = _prediction_to_uint8(image_pred_arr)
 
     # Reverse the one-hot decoding so each class has it's own number in the array,
     # but ignore prediction probability < min_probability
@@ -862,16 +933,18 @@ def polygonize_pred_multiclass(
         image_pred_decoded_arr[:, -border_pixels_to_ignore:] = 0  # Bottom border
 
     # Postprocessing on the raster output
-    if postprocess is None:
-        postprocess = {}
-    if len(postprocess) > 0:
+    if postprocess_tiles_config is None:
+        postprocess_tiles_config = {}
+    if len(postprocess_tiles_config) > 0:
         # If fill_gaps_modal_size is asked...
         if (
-            "filter_background_modal_size" in postprocess
-            and postprocess["filter_background_modal_size"] is not None
-            and postprocess["filter_background_modal_size"] > 0
+            "filter_background_modal_size" in postprocess_tiles_config
+            and postprocess_tiles_config["filter_background_modal_size"] is not None
+            and postprocess_tiles_config["filter_background_modal_size"] > 0
         ):
-            filter_background_modal_size = postprocess["filter_background_modal_size"]
+            filter_background_modal_size = postprocess_tiles_config[
+                "filter_background_modal_size"
+            ]
             image_pred_decoded_modal_arr = skimage.filters.rank.modal(
                 image_pred_decoded_arr,
                 rectangle(filter_background_modal_size, filter_background_modal_size),
@@ -887,8 +960,9 @@ def polygonize_pred_multiclass(
     # the background
     mask_background = True
     if (
-        len(postprocess) > 0
-        and postprocess.get("reclassify_to_neighbour_query", None) is not None
+        len(postprocess_tiles_config) > 0
+        and postprocess_tiles_config.get("reclassify_to_neighbour_query", None)
+        is not None
     ):
         mask_background = False
 
@@ -919,9 +993,11 @@ def polygonize_pred_multiclass(
     )
 
     # Postprocessing on the vectorized result
-    if len(postprocess) > 0:
+    if len(postprocess_tiles_config) > 0:
         # If a reclassify query is specified
-        reclassify_query = postprocess.get("reclassify_to_neighbour_query", None)
+        reclassify_query = postprocess_tiles_config.get(
+            "reclassify_to_neighbour_query", None
+        )
         if reclassify_query is not None:
             result_gdf = vector_util.reclassify_neighbours(
                 result_gdf,
@@ -932,7 +1008,7 @@ def polygonize_pred_multiclass(
             )
 
         # If a simplify is asked...
-        simplify = postprocess.get("simplify", None)
+        simplify = postprocess_tiles_config.get("simplify", None)
         if simplify is not None:
             # Define the bounds of the image as linestring, so points on this
             # border are preserved during the simplify
@@ -941,16 +1017,18 @@ def polygonize_pred_multiclass(
             border_lines = sh_geom.LineString(border_polygon.exterior.coords)
 
             # Determine if topological or normal simplify needs to be used
-            simplify_topological = simplify["simplify_topological"]
+            simplify_topological = postprocess_tiles_config["simplify"][
+                "simplify_topological"
+            ]
             if simplify_topological is None:
                 simplify_topological = True if len(classes) > 2 else False
 
             assert isinstance(result_gdf.geometry, gpd.GeoSeries)
             result_gdf.geometry = pygeoops.simplify(
                 geometry=result_gdf.geometry,
-                algorithm=simplify["simplify_algorithm"],
-                tolerance=simplify["simplify_tolerance"],
-                lookahead=simplify["simplify_lookahead"],
+                algorithm=postprocess_tiles_config["simplify"]["simplify_algorithm"],
+                tolerance=postprocess_tiles_config["simplify"]["simplify_tolerance"],
+                lookahead=postprocess_tiles_config["simplify"]["simplify_lookahead"],
                 preserve_common_boundaries=simplify_topological,
                 keep_points_on=border_lines,
             )
@@ -971,6 +1049,7 @@ def polygonize_pred(
     image_pred_uint8_bin,
     image_crs: str,
     image_transform,
+    *,
     mask_background: bool = True,
     classnames: list[str] | None = None,
     output_basefilepath: Path | None = None,
@@ -979,17 +1058,17 @@ def polygonize_pred(
 
     Args:
         image_pred_uint8_bin (_type_): _description_
-        image_crs (str): _description_
+        image_crs: _description_
         image_transform (_type_): _description_
-        mask_background (bool, optional): _description_. Defaults to True.
-        classnames (Optional[list[str]], optional): _description_. Defaults to None.
-        output_basefilepath (Optional[Path], optional): _description_. Defaults to None.
+        mask_background: _description_. Defaults to True.
+        classnames: _description_. Defaults to None.
+        output_basefilepath: _description_. Defaults to None.
 
     Raises:
         Exception: _description_
 
     Returns:
-        Optional[gpd.GeoDataFrame]: _description_
+        _description_
     """
     # Polygonize result
     try:
@@ -1037,6 +1116,7 @@ def clean_and_save_prediction(
     image_crs: str,
     image_transform: str,
     classes: list,
+    *,
     output_dir: Path,
     input_image_filepath: Path,
     evaluate_mode: bool = False,
@@ -1048,18 +1128,18 @@ def clean_and_save_prediction(
     """Clean the prediction and save it.
 
     Args:
-        image_pred_arr (np.ndarray): The prediction as returned by keras.
-        image_crs (str): _description_
-        image_transform (str): _description_
-        classes (list): _description_
-        output_dir (Path): _description_
-        input_image_filepath (Path): _description_
-        evaluate_mode (bool, optional): _description_. Defaults to False.
-        input_image_dir (Optional[Path], optional): _description_. Defaults to None.
-        input_mask_dir (Optional[Path], optional): _description_. Defaults to None.
-        border_pixels_to_ignore (int, optional): number of pixels at all borders that
+        image_pred_arr: The prediction as returned by keras.
+        image_crs: _description_
+        image_transform: _description_
+        classes: _description_
+        output_dir: _description_
+        input_image_filepath: _description_
+        evaluate_mode: _description_. Defaults to False.
+        input_image_dir: _description_. Defaults to None.
+        input_mask_dir: _description_. Defaults to None.
+        border_pixels_to_ignore: number of pixels at all borders that
             should be ignored. Defaults to 0.
-        min_probability (float): Minimum probability to consider a pixel being of a
+        min_probability: Minimum probability to consider a pixel being of a
             certain class. Defaults to 0.5.
         force (bool, optional): _description_. Defaults to False.
 
@@ -1067,7 +1147,7 @@ def clean_and_save_prediction(
         Exception: _description_
 
     Returns:
-        bool: _description_
+        _description_
     """
     # If nb. channels in prediction > 1, skip the first as it is the background
     image_pred_shape = image_pred_arr.shape
@@ -1148,21 +1228,16 @@ def clean_prediction(
     """Cleans a prediction result and returns a cleaned, uint8 array.
 
     Args:
-        image_pred_arr (np.array): The prediction as returned by keras.
-        border_pixels_to_ignore (int, optional): number of pixels at all borders that
+        image_pred_arr: The prediction as returned by keras.
+        border_pixels_to_ignore: number of pixels at all borders that
             should be ignored. Defaults to 0.
-        output_color_depth (str, optional): Color depth desired. Defaults to '2'.
+        output_color_depth: Color depth desired. Defaults to '2'.
             * binary: 0 or 255
             * full: 256 different values
 
     Returns:
-        np.array: The cleaned result.
+        The cleaned result.
     """
-    # Input should be float32
-    if image_pred_arr.dtype not in [np.float32, np.uint8]:
-        raise Exception(
-            f"image prediction is in an unsupported type: {image_pred_arr.dtype}"
-        )
     if output_color_depth not in ["binary", "full"]:
         raise Exception(f"Unsupported output_color_depth: {output_color_depth}")
 
@@ -1178,11 +1253,8 @@ def clean_prediction(
             image_pred_arr, (image_pred_shape[0], image_pred_shape[1])
         )
 
-    # Convert to uint8 if necessary
-    if image_pred_arr.dtype == np.float32:
-        image_pred_uint8 = np.array((image_pred_arr * 255), dtype=np.uint8)
-    else:
-        image_pred_uint8 = image_pred_arr
+    # Convert to uint8 if necessary.
+    image_pred_uint8 = _prediction_to_uint8(image_pred_arr)
 
     # Convert to binary if needed
     if output_color_depth == "binary":
@@ -1209,10 +1281,10 @@ def save_prediction_uint8(
     """Save the prediction as UINT8.
 
     Args:
-        image_pred_uint8_cleaned (np.ndarray): the prediction to save as uint8.
-        image_crs (str): the crs of the prediction.
-        image_transform (str): the transform of the prediction.
-        output_path (Path): the path to write the prediction to.
+        image_pred_uint8_cleaned: the prediction to save as uint8.
+        image_crs: the crs of the prediction.
+        image_transform: the transform of the prediction.
+        output_path: the path to write the prediction to.
 
     Raises:
         ValueError: an invalid image_transform was passed.
@@ -1261,7 +1333,7 @@ def get_pixelsize_x(transform) -> float:
         transform (_type_): input transform
 
     Returns:
-        float: the x pixel size.
+        the x pixel size.
     """
     return transform[0]
 
