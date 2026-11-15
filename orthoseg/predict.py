@@ -17,7 +17,7 @@ import orthoseg.model.model_helper as mh
 from orthoseg.helpers import config_helper as conf, email_helper
 from orthoseg.lib import cleanup, predicter
 from orthoseg.postprocess import _apply_postprocess
-from orthoseg.util import log_util
+from orthoseg.util import _processing_util, log_util
 
 # Get a logger...
 logger = logging.getLogger(__name__)
@@ -160,6 +160,50 @@ def _set_dtype_policy_for_predict(dtype_policy_raw: str | None):
         logger.info(f"Set keras dtype policy for prediction: {dtype_policy}")
 
 
+def _quantize_model_for_predict(model: Any, model_quantize_raw: str | None) -> None:
+    """Apply configured Float8 quantization to a prediction model."""
+    model_quantize = (
+        "" if model_quantize_raw is None else model_quantize_raw.strip().lower()
+    )
+
+    auto_selected = model_quantize in ("", "auto")
+    if auto_selected:
+        nb_gpu = mh.get_number_gpus()
+        compute_capability = mh.get_min_gpu_compute_capability() if nb_gpu > 0 else None
+        if compute_capability is None or compute_capability < (8, 9):
+            logger.info(
+                f"predict.model_quantize is {model_quantize or 'unset/auto'}, "
+                f"{nb_gpu=}, {compute_capability=}; Float8 quantization requires "
+                "an NVIDIA GPU with compute capability >= 8.9, leaving the model "
+                "unchanged"
+            )
+            return
+        quantize_mode = "float8"
+    elif model_quantize == "float8":
+        quantize_mode = "float8"
+    elif model_quantize == "none":
+        logger.info("predict.model_quantize is none; leave the model unchanged")
+        return
+    else:
+        raise ValueError(
+            f"Unsupported predict.model_quantize value: {model_quantize_raw!r}. "
+            "Supported values are 'auto', 'float8', and 'none'."
+        )
+
+    quantize = getattr(model, "quantize", None)
+    if not callable(quantize):
+        message = (
+            "Float8 model quantization was selected, but this Keras model does not "
+            "provide the quantize() API."
+        )
+        if auto_selected:
+            logger.warning(f"{message} Skip automatic quantization.")
+            return
+        raise RuntimeError(message)
+
+    mf.quantize_model(model, quantize_mode)
+
+
 def _predict_args(args) -> argparse.Namespace:
     # Interprete arguments
     parser = argparse.ArgumentParser(add_help=False)
@@ -225,6 +269,7 @@ def predict(
     logger = log_util.main_log_init(conf.dirs.getpath("log_dir"), __name__)
     logger.info(f"Start predict for config {config_path.stem}")
     logger.debug(f"Config used: \n{conf.pformat_config()}")
+    _processing_util.log_gpu_memory_info(logger)
     model_name = None
 
     try:
@@ -251,36 +296,46 @@ def predict(
             traindata_id = force_model_traindata_id
 
         # Get the best model that already exists for this train dataset,...
-        architecture_id = conf.model.getint("architecture_id")
-        trainparams_id = conf.train.getint("trainparams_id")
+        model_config_name = conf.model["model_config_name"]
         best_model = mh.get_best_model(
             model_dir=conf.dirs.getpath("model_dir"),
             segment_subject=conf.general["segment_subject"],
             traindata_id=traindata_id,
-            architecture_id=architecture_id,
-            trainparams_id=trainparams_id,
+            model_config_name=model_config_name,
         )
 
         # Check if a model was found
         if best_model is None:
             message = (
                 f"No model found in model_dir: {conf.dirs.getpath('model_dir')} for "
-                f"traindata_id: {traindata_id}, architecture_id: {architecture_id}, "
-                f"trainparams_id: {trainparams_id}"
+                f"traindata_id: {traindata_id}, "
+                f"model_config_name: {model_config_name}"
             )
             logger.critical(message)
             raise RuntimeError(message)
         else:
             model_weights_filepath = best_model.filepath
             logger.info(f"Best model found: {model_weights_filepath}")
+            conf.model["model_version"] = best_model.model_version
 
         model_name = best_model.basefilename
 
         # Check if output already exists, and if so, skip prediction.
         output_vector_dir = conf.dirs.getpath("output_vector_dir")
-        output_vector_stem = f"{best_model.base_output_name}_{image_layer}"
-        output_vector_path = output_vector_dir / f"{output_vector_stem}_predict.gpkg"
-        output_vector_postp_path = output_vector_dir / f"{output_vector_stem}.gpkg"
+        predict_filename = mh.format_output_vector_filename(
+            conf.files["output_vector_predict_name"],
+            best_model=best_model,
+            image_layer=image_layer,
+            segment_subject=conf.general["segment_subject"],
+        )
+        postp_filename = mh.format_output_vector_filename(
+            conf.files["output_vector_postp_name"],
+            best_model=best_model,
+            image_layer=image_layer,
+            segment_subject=conf.general["segment_subject"],
+        )
+        output_vector_path = output_vector_dir / predict_filename
+        output_vector_postp_path = output_vector_dir / postp_filename
 
         if output_vector_postp_path.exists():
             message = (
@@ -290,18 +345,6 @@ def predict(
             logger.info(message)
             email_helper.sendmail(message)
             return output_vector_postp_path
-
-        # Backward compat: old-style name had epoch before image_layer, so if such
-        # files exist, return as well.
-        output_legacy_path = (
-            output_vector_dir
-            / f"{best_model.base_output_legacy_name}_{image_layer}.gpkg"
-        )
-        if output_legacy_path.exists():
-            message = f"Predict output exists already for {model_name} on {image_layer}"
-            logger.info(message)
-            email_helper.sendmail(message)
-            return output_legacy_path
 
         # Load the hyperparams of the model
         # TODO: move the hyperparams filename formatting to get_models...
@@ -395,6 +438,8 @@ def predict(
             model, preprocess_input = mf.load_model(
                 best_model.filepath, compile_model=False
             )
+
+        _quantize_model_for_predict(model, conf.predict.get("model_quantize", None))
 
         # Prepare the model for predicting
         nb_gpu = mh.get_number_gpus()

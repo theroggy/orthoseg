@@ -138,20 +138,20 @@ def postprocess(config_path: Path, config_overrules: list[str] | None = None) ->
             traindata_id = force_model_traindata_id
 
         # Get the best model that already exists for this train dataset
-        architecture_id = conf.model.getint("architecture_id")
-        trainparams_id = conf.train.getint("trainparams_id")
+        model_config_name = conf.model["model_config_name"]
         best_model = mh.get_best_model(
             model_dir=conf.dirs.getpath("model_dir"),
             segment_subject=conf.general["segment_subject"],
             traindata_id=traindata_id,
-            architecture_id=architecture_id,
-            trainparams_id=trainparams_id,
+            model_config_name=model_config_name,
         )
         if best_model is None:
             raise RuntimeError(
-                f"No best model found in {conf.dirs.getpath('model_dir')}"
+                f"No best model found in {conf.dirs.getpath('model_dir')} for "
+                f"{model_config_name=}"
             )
 
+        conf.model["model_version"] = best_model.model_version
         model_name = best_model.basefilename
         message = f"Start postprocess for {model_name} on {image_layer}"
         email_helper.sendmail(message)
@@ -159,16 +159,20 @@ def postprocess(config_path: Path, config_overrules: list[str] | None = None) ->
         # Input file  the "most recent" prediction result dir for this subject
         output_vector_dir = conf.dirs.getpath("output_vector_dir")
         image_layer = conf.predict["image_layer"]
-        output_stem = f"{best_model.base_output_name}_{image_layer}"
-        output_predict_path = output_vector_dir / f"{output_stem}_predict.gpkg"
-        output_postp_path = output_vector_dir / f"{output_stem}.gpkg"
-
-        # Backward compat: fall back to old-style name that had epoch before image_layer
-        if not output_predict_path.exists():
-            name = f"{best_model.base_output_legacy_name}_{image_layer}.gpkg"
-            output_legacy_path = output_vector_dir / name
-            if output_legacy_path.exists():
-                output_predict_path = output_legacy_path
+        predict_filename = mh.format_output_vector_filename(
+            conf.files["output_vector_predict_name"],
+            best_model=best_model,
+            image_layer=image_layer,
+            segment_subject=conf.general["segment_subject"],
+        )
+        postp_filename = mh.format_output_vector_filename(
+            conf.files["output_vector_postp_name"],
+            best_model=best_model,
+            image_layer=image_layer,
+            segment_subject=conf.general["segment_subject"],
+        )
+        output_predict_path = output_vector_dir / predict_filename
+        output_postp_path = output_vector_dir / postp_filename
 
         # Apply postprocessing
         _apply_postprocess(output_predict_path, output_postp_path)

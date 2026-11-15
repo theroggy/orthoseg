@@ -1,3 +1,5 @@
+"""Tests for orthoseg.helpers.config_helper."""
+
 import re
 import shutil
 import tempfile
@@ -43,6 +45,93 @@ def test_read_orthoseg_config_image_layers(image_layer):
     assert layer is not None
     assert layer.get("projection") == pyproj.CRS.from_user_input("epsg:31370")
     assert layer.get("switch_axes") is False
+
+
+@pytest.mark.parametrize(
+    "overrules, expected_model_config_name",
+    [
+        ([], ""),
+        (
+            ["model.model_config_name=custom.v1"],
+            "custom.v1",
+        ),
+        (
+            ["model.architecture_id=2", "train.trainparams_id=5"],
+            "2.5",
+        ),
+        (
+            ["model.architecture_id=2", "train.trainparams_id=0"],
+            "2.0",
+        ),
+        (
+            [
+                "model.architecture_id=2",
+                "train.trainparams_id=5",
+                "model.model_config_name=custom.v1",
+            ],
+            "custom.v1",
+        ),
+    ],
+)
+def test_read_orthoseg_config_model_config_name(overrules, expected_model_config_name):
+    """Test if the model_config_name is correctly determined for backward compatibility.
+
+    It also checks if the appropriate warning is raised for deprecated overrules.
+    """
+    # For deprecated overrules, we expect a warning.
+    expected_warning = False
+    for overrule in overrules:
+        if overrule.startswith(("model.architecture_id", "train.trainparams_id")):
+            expected_warning = True
+            break
+
+    if expected_warning:
+        with pytest.warns(UserWarning, match="is deprecated and will be removed"):
+            conf.read_orthoseg_config(SportsFields.config_path, overrules=overrules)
+    else:
+        conf.read_orthoseg_config(SportsFields.config_path, overrules=overrules)
+
+    assert conf.model["model_config_name"] == expected_model_config_name
+    assert conf.model["model_version"] == ""
+    assert "architecture_id" not in conf.model
+    assert "trainparams_id" not in conf.train
+
+
+@pytest.mark.parametrize(
+    "overrule, error_message",
+    [
+        ("model.model_config_name=invalid_name", "must not contain underscores"),
+        ("model.model_config_name=invalid/name", "filename-invalid characters"),
+        ("model.model_version=manual", "must be left empty"),
+    ],
+)
+def test_read_orthoseg_config_model_name_invalid(overrule, error_message):
+    with pytest.raises(ValueError, match=error_message):
+        conf.read_orthoseg_config(SportsFields.config_path, overrules=[overrule])
+
+
+@pytest.mark.parametrize("specify_names", [False, True])
+def test_read_orthoseg_config_output_vector_names_warning(caplog, specify_names):
+    caplog.clear()
+    overrules = []
+    if specify_names:
+        overrules = [
+            "files.output_vector_predict_name={segment_subject}_{image_layer}_predict.gpkg",
+            "files.output_vector_postp_name={segment_subject}_{image_layer}.gpkg",
+        ]
+
+    conf.read_orthoseg_config(SportsFields.config_path, overrules=overrules)
+
+    predict_warn = "files.output_vector_predict_name is not explicitly specified"
+    postp_warn = "files.output_vector_postp_name is not explicitly specified"
+
+    if specify_names:
+        assert predict_warn not in caplog.text
+        assert postp_warn not in caplog.text
+    else:
+        assert predict_warn in caplog.text
+        assert postp_warn in caplog.text
+        assert "fallback value will change to" in caplog.text
 
 
 def test_read_orthoseg_config_extra_config_files_to_load():
@@ -210,10 +299,13 @@ def test_read_orthoseg_config_train_weights_type():
 
     # With a non-existing architecture, no aerial weights should be available, so
     # weights_type should fall back to imagenet.
-    conf.read_orthoseg_config(
-        SportsFields.config_path,
-        overrules=["model.architecture=no-weigths+no-weights"],
-    )
+    with pytest.warns(
+        UserWarning, match="No aerial pretrained weights available for architecture="
+    ):
+        conf.read_orthoseg_config(
+            SportsFields.config_path,
+            overrules=["model.architecture=no-weigths+no-weights"],
+        )
     assert conf.train.get("weights_type") == "imagenet"
 
 

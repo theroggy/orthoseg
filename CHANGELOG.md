@@ -10,11 +10,17 @@
 - Support for all optimizers offered by keras was added, but the setting has now become 
   case sensitive. For Keras >= 3, AdamW is now the default optimizer
   (#334, #335, #338).
-- The minimal version of geofileops is now 0.11 (#350)
-- For standard predictions, the "epoch" is removed from the output files, as it is not
-  really relevant (#356)
+- Replace `model.architecture_id` and `train.trainparams_id` by a new parameter
+  `model.model_config_name`. The replaced parameters are deprecated but are still used
+  if `model.model_config_name` is not specified for backwards compatibility (#375).
 - Running `predict` now (by default) includes postprocessing the output. If you want to
-  keep doing this in a seperate step you can specify `--no_postprocess` (#).
+  keep doing this in a seperate step you can specify `--no_postprocess` (#360).
+- When running `predict` or `postprocess`, the output file name can now be configured
+  via the `files.output_vector_predict_name` and `files.output_vector_postp_name`
+  options. In a future version, the default output file name will change to
+  `{segment_subject}_{image_layer}_{model_version}[_predict].gpkg`, so it is recommended
+  to explicitly configure these parameters to avoid surprises in the future
+  (#356, #378).
 
 ### Improvements
 
@@ -27,6 +33,11 @@
 - Add support to finetune models using weights pretrained on aerial images. This becomes
   the default for supported architectures (#327)
 - Add support for mixed dtype in train and predict (#361)
+- Add support for using float8 quantization for predict (#376)
+- Add option `train.image_format` to specify the image format the training images
+  are saved in. The default image format changed from png to jpeg, as this
+  reduces the disk space needed considerably. The label masks are always saved
+  in png, as saving them in a lossy format is not supported.
 - Add support to reproject a local image layer (#290)
 - Add support to configure an image layer based on a simple dir with images (#337)
 - Add postprocessing option to add a qml style to the output layer (#347)
@@ -39,6 +50,7 @@
   prepare_trainingsdata,... (#369)
 - If a layer cache directory with different image size but same resolution exists,
   use that when predicting (#362)
+- Check and log GPU memory usage when starting `train` or `predict` (#377)
 - Avoid that scripts started with scriptrunner need execute flag on linux (#370)
 - Use SSL bundle from REQUESTS_CA_BUNDLE for WMS fetching if specified (#367)
 - Improve performance of training data preparation (#344)

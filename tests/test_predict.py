@@ -8,7 +8,6 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import geofileops as gfo
-import geopandas as gpd
 import pytest
 from PIL import Image
 
@@ -190,14 +189,54 @@ def test_predict_args(args):
     assert len(valid_args.config_overrules) == nb_overrules
 
 
-@pytest.mark.parametrize("config_path, exp_error", [(Path("INVALID"), True)])
-def test_predict_invalid_config(config_path, exp_error):
-    if exp_error:
-        handler = pytest.raises(ValueError)
+def test_predict_existing_output(tmp_path):
+    testprojects_dir = tmp_path / "sample_projects"
+    shutil.rmtree(testprojects_dir, ignore_errors=True)
+    shutil.copytree(test_helper.sampleprojects_dir, testprojects_dir)
+    project_dir = testprojects_dir / SportsFields.subject
+    config_path = project_dir / SportsFields.config_path.name
+
+    conf.read_orthoseg_config(config_path=config_path)
+    result_vector_dir = conf.dirs.getpath("output_vector_dir")
+
+    # Create postprocess file matching the fallback name
+    postp_file = result_vector_dir / "sportsfields_01_276_BEFL-2025-sportsfields.gpkg"
+    postp_file.touch()
+
+    # Predict should detect existing file and return it
+    result_path = predict(config_path=config_path, postprocess=True)
+    assert result_path == postp_file
+
+
+@pytest.mark.parametrize("postprocess", [False, True])
+def test_predict_custom_output_vector_names(tmp_path, postprocess):
+    testprojects_dir = tmp_path / "sample_projects"
+    shutil.rmtree(testprojects_dir, ignore_errors=True)
+    shutil.copytree(test_helper.sampleprojects_dir, testprojects_dir)
+    project_dir = testprojects_dir / SportsFields.subject
+    config_path = project_dir / SportsFields.config_path.name
+
+    conf.read_orthoseg_config(config_path=config_path)
+    output_vector_dir = conf.dirs.getpath("output_vector_dir")
+    existing_predict = (
+        output_vector_dir / "sportsfields_01_276_BEFL-2025-sportsfields_predict.gpkg"
+    )
+    custom_predict = output_vector_dir / "custom_sportsfields_predict.gpkg"
+    shutil.copy(existing_predict, custom_predict)
+
+    overrules = [
+        "files.output_vector_predict_name=custom_{segment_subject}_predict.gpkg",
+        "files.output_vector_postp_name=custom_{segment_subject}_postp.gpkg",
+    ]
+
+    result_path = predict(
+        config_path=config_path, config_overrules=overrules, postprocess=postprocess
+    )
+    if postprocess:
+        assert result_path.name == "custom_sportsfields_postp.gpkg"
     else:
-        handler = nullcontext()
-    with handler:
-        predict(config_path=config_path)
+        assert result_path.name == "custom_sportsfields_predict.gpkg"
+    assert result_path.exists()
 
 
 def test_predict_error_handling():
@@ -210,6 +249,16 @@ def test_predict_error_handling():
             config_path=SportsFields.config_path,
             config_overrules=["predict.image_layer=UNEXISTING"],
         )
+
+
+@pytest.mark.parametrize("config_path, exp_error", [(Path("INVALID"), True)])
+def test_predict_invalid_config(config_path, exp_error):
+    if exp_error:
+        handler = pytest.raises(ValueError)
+    else:
+        handler = nullcontext()
+    with handler:
+        predict(config_path=config_path)
 
 
 @pytest.mark.parametrize(
@@ -270,12 +319,12 @@ def test_predict_use_cache_skip(tmp_path, use_cache, skip_images):
     # Check output results
     result_vector_dir = conf.dirs.getpath("output_vector_dir")
     result_vector_path = (
-        result_vector_dir / "sportsfields_01_BEFL-2025-sportsfields.gpkg"
+        result_vector_dir / "sportsfields_01_276_BEFL-2025-sportsfields.gpkg"
     )
 
     # The area of the output should be within a 10% margin of the expected area.
     assert result_vector_path.exists()
-    result_gdf = gpd.read_file(result_vector_path)
+    result_gdf = gfo.read_file(result_vector_path)
     assert result_gdf is not None
     assert result_gdf.crs.to_epsg() == 31370
     exp_area = 33177 if not skip_images else 5723
@@ -302,6 +351,72 @@ def test_predict_postprocess(tmp_path, postprocess):
     else:
         assert result_count == SportsFields.expected_output_count
         assert result_path.stem.endswith("_predict")
+
+
+@pytest.mark.parametrize(
+    "model_quantize_raw, nb_gpu, compute_capability, expected_calls",
+    [
+        (None, 0, None, []),
+        (None, 1, (8, 9), ["float8"]),
+        ("", 1, (8, 8), []),
+        ("auto", 1, (8, 9), ["float8"]),
+        ("FLOAT8", 0, None, ["float8"]),
+        ("none", 1, (9, 0), []),
+    ],
+)
+def test_quantize_model_for_predict(
+    monkeypatch, model_quantize_raw, nb_gpu, compute_capability, expected_calls
+):
+    class FakeModel:
+        def __init__(self):
+            self.layers = []
+            self.quantize_calls = []
+
+        def quantize(self, mode):
+            self.quantize_calls.append(mode)
+
+    monkeypatch.setattr(predict_module.mh, "get_number_gpus", lambda: nb_gpu)
+    monkeypatch.setattr(
+        predict_module.mh,
+        "get_min_gpu_compute_capability",
+        lambda: compute_capability,
+    )
+
+    model = FakeModel()
+    predict_module._quantize_model_for_predict(model, model_quantize_raw)
+
+    assert model.quantize_calls == expected_calls
+
+
+def test_quantize_model_for_predict_invalid_option():
+    with pytest.raises(ValueError, match="Supported values"):
+        predict_module._quantize_model_for_predict(object(), "mixed_bfloat8")
+
+
+def test_quantize_model_for_predict_auto_skips_when_api_unavailable(
+    monkeypatch, caplog
+):
+    class FakeModel:
+        layers: tuple = ()
+
+    monkeypatch.setattr(predict_module.mh, "get_number_gpus", lambda: 1)
+    monkeypatch.setattr(
+        predict_module.mh,
+        "get_min_gpu_compute_capability",
+        lambda: (8, 9),
+    )
+
+    predict_module._quantize_model_for_predict(FakeModel(), "auto")
+
+    assert "does not provide the quantize() API" in caplog.text
+
+
+def test_quantize_model_for_predict_explicit_option_requires_api():
+    class FakeModel:
+        layers: tuple = ()
+
+    with pytest.raises(RuntimeError, match="does not provide the quantize"):
+        predict_module._quantize_model_for_predict(FakeModel(), "float8")
 
 
 @pytest.mark.parametrize(

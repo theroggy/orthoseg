@@ -19,10 +19,21 @@
   postprocessing implementations; these are internal APIs and may change without
   notice. Prefer the top-level API or CLI for user-facing integrations.
 
-## Build, test, and lint
+## Build, test, lint and run python scripts
 
-- First activate the conda environment selected for the workspace in the IDE to be able
-  to run python scripts, tests,...
+- Before running Python scripts or tests, activate the Conda environment selected for
+  the workspace in the IDE in the same PowerShell session. If needed, initialize the
+  Conda PowerShell hook with
+  `(& conda 'shell.powershell' 'hook') | Out-String | Invoke-Expression`, then run
+  `conda activate <env-name>`; derive the environment name from the selected
+  interpreter path (`...\envs\<env-name>\python.exe`).
+- Verify activation with `$env:CONDA_DEFAULT_ENV` and
+  `python -c "import sys; print(sys.executable)"`. Configuring the IDE interpreter
+  does not activate the terminal environment; do not substitute a direct call to the
+  environment's `python.exe`, since activation may set native-library paths required
+  by TensorFlow.
+- Each PowerShell tool call starts a fresh shell, so activate the environment again
+  in the same command whenever running Python.
 - Run the test suite with `pytest tests/`. Run one test with, for example:
   `pytest tests/test_trainer.py::test_train_error_model_exists_no_preload`.
 - Run the configured formatter, linter, and type checker with
@@ -38,6 +49,8 @@
   `pytest.mark.parametrize` when several cases share setup and assertions, keep
   one-off test names concise, and order test functions alphabetically within each
   test module.
+- Prefer platform-specific skips over monkeypatching platform metadata; use monkeypatch
+  to isolate external dependencies.
 - Keep project-specific behavior in configuration rather than adding per-project
   Python code. Load and validate project settings through
   `orthoseg.helpers.config_helper`; use its typed accessors for values such as paths,

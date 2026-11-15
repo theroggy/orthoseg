@@ -20,6 +20,7 @@ from osgeo import gdal
 
 from orthoseg._compat import KERAS_GTE_3
 from orthoseg.lib.prepare_traindatasets import LabelInfo
+from orthoseg.model.model_helper import format_model_config_name
 from orthoseg.model.model_weights_helper import get_weights_types_for_architecture
 from orthoseg.util import config_util
 from orthoseg.util.image_util import (
@@ -159,6 +160,44 @@ def read_orthoseg_config(config_path: Path, overrules: list[str] | None = None):
     cleanup = config["cleanup"]
 
     # Some checks to make sure the config is loaded properly
+    configured_model_version = model.get("model_version", "").strip()
+    if configured_model_version:
+        raise ValueError(
+            "model.model_version is derived at runtime and must be left empty"
+        )
+
+    # For backwards compatibility, check if architecture_id and trainparams_id are
+    # specified in the config. If this is the case, use their values and remove them.
+    architecture_id = 0
+    if "architecture_id" in model:
+        arch_id_val = model.get("architecture_id", "").strip()
+        if arch_id_val:
+            architecture_id = int(arch_id_val)
+            warnings.warn(
+                "architecture_id is deprecated and will be removed in future versions. "
+                "Use model_config_name instead.",
+                stacklevel=2,
+            )
+        del model["architecture_id"]
+
+    trainparams_id = 0
+    if "trainparams_id" in train:
+        train_id_val = train.get("trainparams_id", "").strip()
+        if train_id_val:
+            trainparams_id = int(train_id_val)
+            warnings.warn(
+                "trainparams_id is deprecated and will be removed in future versions. "
+                "Use model_config_name instead.",
+                stacklevel=2,
+            )
+        del train["trainparams_id"]
+
+    model["model_config_name"] = format_model_config_name(
+        model_config_name=model.get("model_config_name", "").strip(),
+        architecture_id=architecture_id,
+        trainparams_id=trainparams_id,
+    )
+
     segment_subject = general.get("segment_subject")
     if segment_subject is None or segment_subject == "MUST_OVERRIDE":
         raise ValueError(
@@ -184,6 +223,32 @@ def read_orthoseg_config(config_path: Path, overrules: list[str] | None = None):
             f"dirs.projects_dir was relative: is resolved to {projects_dir_absolute}"
         )
         dirs["projects_dir"] = projects_dir_absolute.as_posix()
+
+    output_vector_predict_name = files.get("output_vector_predict_name", "").strip()
+    if not output_vector_predict_name:
+        logger.warning(
+            "files.output_vector_predict_name is not explicitly specified. "
+            "In future versions, the fallback value will change to "
+            "'{segment_subject}_{image_layer}_{model_version}_predict.gpkg'. "
+            "Currently falling back to the pattern used in the past (including the "
+            "epoch)."
+        )
+        files["output_vector_predict_name"] = (
+            "{segment_subject}_{model_version}_{epoch}_{image_layer}_predict.gpkg"
+        )
+
+    output_vector_postp_name = files.get("output_vector_postp_name", "").strip()
+    if not output_vector_postp_name:
+        logger.warning(
+            "files.output_vector_postp_name is not explicitly specified. "
+            "In future versions, the fallback value will change to "
+            "'{segment_subject}_{image_layer}_{model_version}.gpkg'. "
+            "Currently falling back to the pattern used in the past (including the "
+            "epoch)."
+        )
+        files["output_vector_postp_name"] = (
+            "{segment_subject}_{model_version}_{epoch}_{image_layer}.gpkg"
+        )
 
     # If postprocess.output_style_path is a relative path, resolve it towards the
     # location of the project config file.
