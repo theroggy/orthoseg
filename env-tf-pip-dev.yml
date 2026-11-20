@@ -1,25 +1,30 @@
+# This is an environment with recent versions of dependencies while tensorflow is
+# installed using pip.
+#
+# Notes:
+#   - necessary for windows, as conda-forge does not provide a tf package for windows
 name: orthoseg-tf-pip-dev
-# This development environment installs TensorFlow from pip as for e.g. for windows it
-# is not available on conda-forge.
 channels:
   - conda-forge
 dependencies:
-  - python =3.12
+  - python <3.14
   - pip
   # required
+  - astunparse  # Avoid it being installed via pip, otherwise segfault on windows
   - gdal
-  - geofileops >=0.12
-  - geopandas-base >=0.12
+  - geofileops
+  - geopandas-base
+  - keras
   - matplotlib-base
   - numpy
   - owslib
   - pandas
   - pillow
   - pycron
-  - pygeoops >=0.2
+  - pygeoops
   - pyproj
   - rasterio
-  - shapely >=2
+  - shapely
   - scikit-image
   - simplification
   # optional, for CUDA support
@@ -37,6 +42,6 @@ dependencies:
   - pytest-order
   - pip:
     - segmodels-keras
-    - tensorflow >=2.8
+    - tensorflow
     - types-shapely
     - types-tensorflow
