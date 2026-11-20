@@ -1,0 +1,38 @@
+# This is the standard environment with recent versions of core dependencies.
+#
+# Notes:
+#   - if you want to use another backend, replace tensorflow with the desired backend
+#     package.
+#   - the tensorflow package will detect if a GPU is available and install the
+#     appropriate version.
+name: orthoseg
+channels:
+  - conda-forge
+dependencies:
+  - python <3.14
+  - pip
+  # required
+  - gdal
+  - geofileops
+  - geopandas-base
+  - keras
+  - matplotlib-base
+  - numpy
+  - owslib
+  - pandas
+  - pillow
+  - pycron
+  - pygeoops
+  - pyproj
+  - rasterio
+  - shapely
+  - scikit-image
+  - simplification
+  - tensorflow
+  # testing
+  - pytest
+  - pytest-cov
+  - pytest-order
+  - pip:
+    - segmodels-keras
+    - orthoseg

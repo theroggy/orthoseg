@@ -7,8 +7,7 @@ import sys
 import traceback
 from pathlib import Path
 
-import keras
-
+from orthoseg._keras import keras
 from orthoseg.helpers import config_helper as conf, email_helper
 from orthoseg.lib import predicter, prepare_traindatasets as prep, trainer
 from orthoseg.model import model_factory as mf, model_helper as mh
@@ -16,24 +15,6 @@ from orthoseg.util import _processing_util, image_util, log_util
 
 # Get a logger...
 logger = logging.getLogger(__name__)
-
-
-def _set_dtype_policy_for_train(dtype_policy_raw: str | None):
-    """Resolve and apply dtype policy for training.
-
-    Args:
-        dtype_policy_raw: Raw config value from `train.dtype_policy`.
-            - `None` or empty: defaults to float32.
-            - otherwise: apply the policy value explicitly.
-    """
-    dtype_policy = "" if dtype_policy_raw is None else dtype_policy_raw.strip()
-
-    if dtype_policy == "":
-        dtype_policy = "float32"
-        logger.info("train.dtype_policy is unset, set keras dtype policy to float32")
-
-    logger.info(f"Set keras dtype policy for training: {dtype_policy}")
-    mf.set_dtype_policy(dtype_policy)
 
 
 def _train_args(args) -> argparse.Namespace:
@@ -89,7 +70,10 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
     global logger  # noqa: PLW0603
     logger = log_util.main_log_init(conf.dirs.getpath("log_dir"), __name__)
 
-    _set_dtype_policy_for_train(conf.train.get("dtype_policy", None))
+    dtype_policy = mh.resolve_dtype_policy(conf.train.get("dtype_policy", None))
+    if dtype_policy is not None:
+        mf.set_dtype_policy(dtype_policy)
+        logger.info(f"Set keras dtype policy for training: {dtype_policy}")
 
     # Log start
     logger.info(f"Start train for config {config_path.stem}")
@@ -194,6 +178,7 @@ def train(config_path: Path, config_overrules: list[str] | None = None):
             ),
             log_tensorboard=conf.train.getboolean("log_tensorboard"),
             log_csv=conf.train.getboolean("log_csv"),
+            dtype_policy=dtype_policy,
         )
         if trainparams.image_augmentations.get("rescale") is not None:
             raise ValueError(

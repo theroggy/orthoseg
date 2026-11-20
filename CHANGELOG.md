@@ -26,13 +26,14 @@
 
 - Add proper support for keras 3:
     - Use [segmodels_keras](https://github.com/orthoseg/segmodels_keras) (#311)
-    - Avoid unneeded direct use of tensorflow (#304, #313)
+    - Make tensorflow an optional dependency (#304, #313, #385)
     - Use ``segmodels_keras.utils.load_weights`` for forward and backward compatibility
       when loading cross-keras-version weights (#339)
 - Use keras.applications `preprocess_input` functions to prepare inputs (#314)
 - Add support to finetune models using weights pretrained on aerial images. This becomes
   the default for supported architectures (#327)
-- Add support for mixed dtype in train and predict (#361)
+- Add support for mixed dtype in train and predict and use it as default for CUDA
+  GPU with capability >= 7 (#361, #388)
 - Add support for using float8 quantization for predict (#376)
 - Add option `train.image_format` to specify the image format the training images
   are saved in. The default image format changed from png to jpeg, as this

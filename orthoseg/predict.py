@@ -1,6 +1,7 @@
 """High-level API to run a segmentation."""
 
 import argparse
+import importlib
 import logging
 import math
 import pprint
@@ -14,6 +15,7 @@ import rasterio as rio
 
 import orthoseg.model.model_factory as mf
 import orthoseg.model.model_helper as mh
+from orthoseg._keras import keras
 from orthoseg.helpers import config_helper as conf, email_helper
 from orthoseg.lib import cleanup, predicter
 from orthoseg.postprocess import _apply_postprocess
@@ -131,33 +133,64 @@ def _check_input_image_pixel_size(
     return None
 
 
-def _set_dtype_policy_for_predict(dtype_policy_raw: str | None):
-    """Resolve and apply dtype policy for prediction.
+def _set_torch_optimizations(model: keras.Model) -> None:
+    """Set torch-specific optimizations for the model.
 
     Args:
-        dtype_policy_raw: Raw config value from `predict.dtype_policy`.
-            - `None` or empty: set mixed_float16 on GPU with compute capability >= 7,
-              else keep the default (float32).
-            - "None" as string: don't set any policy, let Keras use the default
-              (float32).
-            - otherwise: apply the policy value explicitly.
+        model: The Keras model to apply torch-specific optimizations to.
     """
-    dtype_policy = "" if dtype_policy_raw is None else dtype_policy_raw.strip()
+    if keras.backend.backend() != "torch":
+        return
 
-    # Unset policy should still be deterministic and not depend on previous runs.
-    if dtype_policy == "":
-        nb_gpu = mh.get_number_gpus()
-        compute_capability = mh.get_min_gpu_compute_capability() if nb_gpu > 0 else None
-        if compute_capability is not None and compute_capability[0] >= 7:
-            mf.set_dtype_policy("mixed_float16")
+    torch = importlib.import_module("torch")
+    cuda_available = torch.cuda.is_available()
+    gpu_capability = mh.get_min_gpu_compute_capability()
 
-            logger.info(
-                f"predict.dtype_policy is unset, {nb_gpu=}, {compute_capability=}, "
-                f"set to mixed_float16"
-            )
-    elif dtype_policy.lower() != "none":
-        mf.set_dtype_policy(dtype_policy)
-        logger.info(f"Set keras dtype policy for prediction: {dtype_policy}")
+    if not cuda_available:
+        compile_supported = _torch_cpu_compile_smoke_test(torch)
+    else:
+        compile_supported = gpu_capability is not None and gpu_capability >= (7, 0)
+
+    if compile_supported:
+        logger.info("Activating torch compile for model")
+        model.jit_compile = True
+    else:
+        logger.info(f"Torch compile not activated; GPU capability: {gpu_capability}")
+
+    if cuda_available and torch.backends.cudnn.is_available():
+        torch.backends.cudnn.benchmark = True
+        logger.info("Enabled cuDNN benchmark for PyTorch prediction")
+
+
+def _torch_cpu_compile_smoke_test(torch_module: Any) -> bool:
+    compile_function = getattr(torch_module, "compile", None)
+    if not callable(compile_function):
+        logger.warning("torch.compile is unavailable")
+        return False
+
+    try:
+        test_input = torch_module.ones(1, device="cpu")
+        compiled_function = compile_function(
+            lambda value: value + 1,
+            fullgraph=True,
+        )
+        test_output = compiled_function(test_input)
+        expected_output = torch_module.full_like(test_input, 2)
+    except RuntimeError as ex:
+        logger.warning(
+            f"CPU torch.compile smoke test failed; using eager prediction: {ex}"
+        )
+        return False
+
+    if not torch_module.equal(test_output, expected_output):
+        logger.warning(
+            "CPU torch.compile smoke test returned an unexpected result; "
+            "using eager prediction"
+        )
+        return False
+
+    logger.info("CPU torch.compile smoke test passed")
+    return True
 
 
 def _quantize_model_for_predict(model: Any, model_quantize_raw: str | None) -> None:
@@ -182,7 +215,7 @@ def _quantize_model_for_predict(model: Any, model_quantize_raw: str | None) -> N
     elif model_quantize == "float8":
         quantize_mode = "float8"
     elif model_quantize == "none":
-        logger.info("predict.model_quantize is none; leave the model unchanged")
+        logger.info("predict.model_quantize is none; don't apply quantization")
         return
     else:
         raise ValueError(
@@ -266,7 +299,12 @@ def predict(
         nb_logfiles_tokeep=conf.logging_conf.getint("nb_logfiles_tokeep"),
     )
     global logger  # noqa: PLW0603
-    logger = log_util.main_log_init(conf.dirs.getpath("log_dir"), __name__)
+    log_level = conf.logging_conf.get("log_level", "INFO")
+    logger = log_util.main_log_init(
+        conf.dirs.getpath("log_dir"),
+        __name__,
+        log_level=log_level,
+    )
     logger.info(f"Start predict for config {config_path.stem}")
     logger.debug(f"Config used: \n{conf.pformat_config()}")
     _processing_util.log_gpu_memory_info(logger)
@@ -363,7 +401,10 @@ def predict(
             input_height=input_height_pred,
         )
 
-        _set_dtype_policy_for_predict(conf.predict.get("dtype_policy", None))
+        dtype_policy = mh.resolve_dtype_policy(conf.predict.get("dtype_policy", None))
+        if dtype_policy is not None:
+            mf.set_dtype_policy(dtype_policy)
+            logger.info(f"Set keras dtype policy for prediction: {dtype_policy}")
 
         # Prepare output subdir to be used for predictions
         predict_out_subdir = best_model.base_output_name
@@ -439,6 +480,11 @@ def predict(
                 best_model.filepath, compile_model=False
             )
 
+        # When loading models saved as .keras files, the explicitly saved per layer
+        # dtype policy determines the the dtype used for that layer rather than the
+        # general dtype policy set.
+        # Force the specified dtype policy on the loaded model layers.
+        mf.set_model_dtype_policy(model, dtype_policy)
         _quantize_model_for_predict(model, conf.predict.get("model_quantize", None))
 
         # Prepare the model for predicting
@@ -464,6 +510,9 @@ def predict(
                 logger.info("Predict using single GPU or CPU")
                 model_for_predict = model
 
+        # Set torch-specific optimizations
+        _set_torch_optimizations(model=model_for_predict)
+
         # Prepare params for the inline postprocessing of the prediction
         min_probability = conf.predict.getfloat("min_probability")
         postprocess_tiles_config: dict[str, Any] = {}
@@ -486,7 +535,7 @@ def predict(
             query = query.replace("\n", " ")
         postprocess_tiles_config["reclassify_to_neighbour_query"] = query
         logger.info(
-            f"Inline postprocessing:\n{pprint.pformat(postprocess_tiles_config)}"
+            f"Inline postprocessing config:\n{pprint.pformat(postprocess_tiles_config)}"
         )
 
         # Prepare the output dirs/paths

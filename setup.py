@@ -1,4 +1,4 @@
-"""Configuration setting to build the orthoseg package."""
+"""Configuration setting to build the OrthoSeg package."""
 
 from pathlib import Path
 
@@ -25,6 +25,7 @@ setuptools.setup(
         "gdal",
         "geofileops>=0.12",
         "geopandas>=1.0",
+        "keras",
         "matplotlib",
         "numpy",
         "owslib",
@@ -36,8 +37,12 @@ setuptools.setup(
         "segmodels-keras",
         "shapely>=2",
         "simplification",
-        "tensorflow>=2.10",
     ],
+    extras_require={
+        "tensorflow": ["tensorflow>=2.10"],
+        "torch": ["keras>=3", "torch"],
+        "jax": ["keras>=3", "jax"],
+    },
     entry_points="""
             [console_scripts]
             orthoseg_load_images=orthoseg.load_images:main

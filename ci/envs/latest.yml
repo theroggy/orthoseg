@@ -1,27 +1,31 @@
 # This is the standard environment with recent version of all dependencies.
+#
+# Note: this environment doesn't include a backend like TensorFlow, PyTorch or JAX. This
+# should be added when creating the environment rather than installing it seperately
+# afterwards to avoid potential conflicts.
 name: orthoseg-latest
 channels:
   - conda-forge
 dependencies:
-  - python <3.13
+  - python <3.14
   - pip
   # required
   - gdal
-  - geofileops >=0.12
-  - geopandas-base >=1.0
+  - geofileops
+  - geopandas-base
+  - keras
   - matplotlib-base
   - numpy
   - owslib
   - pandas
   - pillow
   - pycron
-  - pygeoops >=0.4
+  - pygeoops
   - pyproj
   - rasterio
-  - shapely >=2
+  - shapely
   - scikit-image
   - simplification
-  - tensorflow-cpu >=2.8
   # testing
   - pytest
   - pytest-cov

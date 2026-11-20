@@ -27,7 +27,7 @@ devdir = "./"
 
 # -- Project information -----------------------------------------------------
 
-project = "orthoseg"
+project = "OrthoSeg"
 copyright = "2025, Pieter Roggemans"
 author = "Pieter Roggemans"
 
@@ -117,7 +117,7 @@ base_url = os.environ.get("READTHEDOCS_CANONICAL_URL", "/")
 url_conda_envs = f"{base_url}_static/conda_envs"
 
 rst_epilog = f"""
-.. |environment| replace:: {url_conda_envs}/environment.yml
+.. |environment-tf-gpu-win| replace:: {url_conda_envs}/environment-tf-gpu-win.yml
 .. |environment-tf-pip| replace:: {url_conda_envs}/environment-tf-pip.yml
-.. |environment-win-gpu| replace:: {url_conda_envs}/environment-win-gpu.yml
+.. |environment-tf| replace:: {url_conda_envs}/environment-tf.yml
 """

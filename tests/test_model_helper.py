@@ -1,10 +1,14 @@
 """Tests for the model_helper module."""
 
 import csv
+import json
 import re
+import zipfile
 from pathlib import Path
 
+import h5py
 import keras
+import numpy as np
 import pytest
 
 from orthoseg._compat import KERAS_GTE_3
@@ -302,6 +306,63 @@ def test_parse_model_filename_invalid(tmp_path, filename, err_msg):
         _ = model_helper.parse_model_filename(tmp_file)
 
 
+@pytest.mark.skipif(not KERAS_GTE_3, reason="requires Keras 3 .keras format")
+def test_save_and_clean_models_omits_optimizer_state(tmp_path):
+    model = keras.Sequential(
+        [
+            keras.Input((4,)),
+            keras.layers.Dense(4),
+            keras.layers.Activation("softmax"),
+        ]
+    )
+    model.compile(
+        optimizer=keras.optimizers.AdamW(),
+        loss="categorical_crossentropy",
+    )
+    inputs = np.ones((1, 4), dtype=np.float32)
+    targets = np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32)
+    model.train_on_batch(inputs, targets)
+    optimizer = model.optimizer
+    expected_prediction = model.predict(inputs, verbose=0)
+
+    model_helper.save_and_clean_models(
+        model_save_dir=tmp_path,
+        segment_subject="subj",
+        traindata_id=1,
+        monitor_metric_mode="max",
+        new_model=model,
+        new_model_monitor_value=0.95,
+        new_model_epoch=101,
+        save_format="keras",
+        save_min_accuracy=0.8,
+        verbose=False,
+    )
+
+    model_path = next(tmp_path.glob("*.keras"))
+    with zipfile.ZipFile(model_path) as archive:
+        config = json.loads(archive.read("config.json"))
+        assert config["compile_config"]["optimizer"]["class_name"] == "AdamW"
+        with archive.open("model.weights.h5") as weights_file:
+            with h5py.File(weights_file, "r") as weights:
+                optimizer_paths = []
+                weights.visititems(
+                    lambda path, item: (
+                        optimizer_paths.append(path)
+                        if isinstance(item, h5py.Dataset)
+                        and path.startswith("optimizer/")
+                        else None
+                    )
+                )
+    assert optimizer_paths == []
+    assert model.optimizer is optimizer
+    assert model.compiled
+
+    loaded_model = keras.models.load_model(model_path, compile=False)
+    np.testing.assert_allclose(
+        loaded_model.predict(inputs, verbose=0), expected_prediction
+    )
+
+
 def test_trainparams_backwards_compatibility():
     """Test if the TrainParams class can still load old hyperparams.
 
@@ -329,12 +390,43 @@ def test_trainparams_defaults(class_weights):
     )
 
     assert params.weights_type == "aerial"
+    assert params.dtype_policy is None
     assert params.save_format == "keras" if KERAS_GTE_3 else "h5"
     if class_weights is not None:
         expected_loss_function = "weighted_categorical_crossentropy"
     else:
         expected_loss_function = "categorical_crossentropy"
     assert params.loss_function == expected_loss_function
+
+
+@pytest.mark.parametrize(
+    ("dtype_policy_raw, nb_gpu, compute_capability, expected_policy"),
+    [
+        ("float32", 0, None, "float32"),
+        ("", 0, None, None),
+        ("", 2, (7, 0), "mixed_float16"),
+        ("", 2, (6, 1), None),
+        ("", 1, None, None),
+        (None, 0, None, None),
+        (None, 1, (7, 5), "mixed_float16"),
+        ("None", 0, None, None),
+    ],
+)
+def test_resolve_dtype_policy(
+    monkeypatch,
+    dtype_policy_raw,
+    nb_gpu,
+    compute_capability,
+    expected_policy,
+):
+    monkeypatch.setattr(model_helper, "get_number_gpus", lambda: nb_gpu)
+    monkeypatch.setattr(
+        model_helper,
+        "get_min_gpu_compute_capability",
+        lambda: compute_capability,
+    )
+
+    assert model_helper.resolve_dtype_policy(dtype_policy_raw) == expected_policy
 
 
 def test_hyperparams_legacy_json_compatibility(tmp_path):
